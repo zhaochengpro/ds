@@ -1,23 +1,7 @@
-# 加密货币交易所API
 ccxt
-
-# OpenAI/DeepSeek API客户端
 openai
-
-# 数据处理和分析
 pandas
-
-# 任务调度
 schedule
-
-# 环境变量管理（推荐使用）
 python-dotenv
-
-# HTTP请求库
 requests
-
-# URL处理
 urllib3
-
-# 如果需要保存结果到文件，可以添加：
-# numpy==1.25.2

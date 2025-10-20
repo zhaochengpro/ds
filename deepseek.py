@@ -87,17 +87,46 @@ def get_current_position():
     """获取当前持仓情况"""
     try:
         positions = exchange.fetch_positions([TRADE_CONFIG['symbol']])
+
+        # 标准化配置的交易对符号用于比较
+        config_symbol_normalized = 'BTC/USDT:USDT'
+
         for pos in positions:
-            if pos['symbol'] == 'BTC/USDT' and abs(pos['contracts']) > 0:
-                return {
-                    'side': 'long' if pos['side'] == 'long' else 'short',
-                    'size': abs(pos['contracts']),
-                    'entry_price': pos['entryPrice'],
-                    'unrealized_pnl': pos['unrealizedPnl']
-                }
+
+            # 比较标准化的符号
+            if pos['symbol'] == config_symbol_normalized:
+                # 获取持仓数量
+                position_amt = 0
+                if 'positionAmt' in pos.get('info', {}):
+                    position_amt = float(pos['info']['positionAmt'])
+                elif 'contracts' in pos:
+                    # 使用 contracts 字段，根据 side 确定方向
+                    contracts = float(pos['contracts'])
+                    if pos.get('side') == 'short':
+                        position_amt = -contracts
+                    else:
+                        position_amt = contracts
+
+                print(f"调试 - 持仓量: {position_amt}")
+
+                if position_amt != 0:  # 有持仓
+                    side = 'long' if position_amt > 0 else 'short'
+                    return {
+                        'side': side,
+                        'size': abs(position_amt),
+                        'entry_price': float(pos.get('entryPrice', 0)),
+                        'unrealized_pnl': float(pos.get('unrealizedPnl', 0)),
+                        'position_amt': position_amt,
+                        'symbol': pos['symbol']  # 返回实际的symbol用于调试
+                    }
+
+        print("调试 - 未找到有效持仓")
         return None
+
     except Exception as e:
         print(f"获取持仓失败: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -227,9 +256,15 @@ def execute_trade(signal_data, price_data):
         if signal_data['signal'] == 'BUY':
             if current_position and current_position['side'] == 'short':
                 print("平空仓并开多仓...")
+                # 先平空仓，再开多仓
                 exchange.create_market_buy_order(
                     TRADE_CONFIG['symbol'],
-                    current_position['size'] + TRADE_CONFIG['amount']
+                    current_position['size']  # 平仓数量
+                )
+                time.sleep(1)  # 等待订单完成
+                exchange.create_market_buy_order(
+                    TRADE_CONFIG['symbol'],
+                    TRADE_CONFIG['amount']  # 开仓数量
                 )
             elif not current_position:
                 print("开多仓...")
@@ -243,9 +278,15 @@ def execute_trade(signal_data, price_data):
         elif signal_data['signal'] == 'SELL':
             if current_position and current_position['side'] == 'long':
                 print("平多仓并开空仓...")
+                # 先平多仓，再开空仓
                 exchange.create_market_sell_order(
                     TRADE_CONFIG['symbol'],
-                    current_position['size'] + TRADE_CONFIG['amount']
+                    current_position['size']  # 平仓数量
+                )
+                time.sleep(1)  # 等待订单完成
+                exchange.create_market_sell_order(
+                    TRADE_CONFIG['symbol'],
+                    TRADE_CONFIG['amount']  # 开仓数量
                 )
             elif not current_position:
                 print("开空仓...")
@@ -261,11 +302,15 @@ def execute_trade(signal_data, price_data):
             return
 
         print("订单执行成功")
+        # 更新持仓信息
+        time.sleep(2)  # 等待交易所更新
         position = get_current_position()
+        print(f"更新后持仓: {position}")
 
     except Exception as e:
         print(f"订单执行失败: {e}")
-
+        import traceback
+        traceback.print_exc()
 
 def trading_bot():
     """主交易机器人函数"""
