@@ -16,18 +16,22 @@ deepseek_client = OpenAI(
     base_url="https://api.deepseek.com"
 )
 
-exchange = ccxt.binance({
-    'options': {'defaultType': 'future'},
-    'apiKey': os.getenv('BINANCE_API_KEY'),
-    'secret': os.getenv('BINANCE_SECRET'),
+# 初始化OKX交易所
+exchange = ccxt.okx({
+    'options': {
+        'defaultType': 'swap',  # OKX使用swap表示永续合约
+    },
+    'apiKey': os.getenv('OKX_API_KEY'),
+    'secret': os.getenv('OKX_SECRET'),
+    'password': os.getenv('OKX_PASSWORD'),  # OKX需要交易密码
 })
 
 # 交易参数配置
 TRADE_CONFIG = {
-    'symbol': 'BTC/USDT',
+    'symbol': 'BTC/USDT:USDT',  # OKX的合约符号格式
     'amount': 0.001,  # 交易数量 (BTC)
     'leverage': 10,  # 杠杆倍数
-    'timeframe': '15m',  # 使用1小时K线，可改为15m
+    'timeframe': '15m',  # 使用15分钟K线
     'test_mode': False,  # 测试模式
 }
 
@@ -40,14 +44,22 @@ position = None
 def setup_exchange():
     """设置交易所参数"""
     try:
-        # 设置杠杆
-        exchange.set_leverage(TRADE_CONFIG['leverage'], TRADE_CONFIG['symbol'])
+        # OKX设置杠杆
+        exchange.set_leverage(
+            TRADE_CONFIG['leverage'],
+            TRADE_CONFIG['symbol'],
+            {'mgnMode': 'cross'}  # 全仓模式，也可用'isolated'逐仓
+        )
         print(f"设置杠杆倍数: {TRADE_CONFIG['leverage']}x")
 
         # 获取余额
         balance = exchange.fetch_balance()
         usdt_balance = balance['USDT']['free']
         print(f"当前USDT余额: {usdt_balance:.2f}")
+
+        # 设置持仓模式 (双向持仓)
+        exchange.set_position_mode(True, TRADE_CONFIG['symbol'])
+        print("设置双向持仓模式")
 
         return True
     except Exception as e:
@@ -56,7 +68,7 @@ def setup_exchange():
 
 
 def get_btc_ohlcv():
-    """获取BTC/USDT的K线数据（1小时或15分钟）"""
+    """获取BTC/USDT的K线数据"""
     try:
         # 获取最近10根K线
         ohlcv = exchange.fetch_ohlcv(TRADE_CONFIG['symbol'], TRADE_CONFIG['timeframe'], limit=10)
@@ -88,39 +100,20 @@ def get_current_position():
     try:
         positions = exchange.fetch_positions([TRADE_CONFIG['symbol']])
 
-        # 标准化配置的交易对符号用于比较
-        config_symbol_normalized = 'BTC/USDT:USDT'
-
         for pos in positions:
+            if pos['symbol'] == TRADE_CONFIG['symbol']:
+                contracts = float(pos['contracts']) if pos['contracts'] else 0
 
-            # 比较标准化的符号
-            if pos['symbol'] == config_symbol_normalized:
-                # 获取持仓数量
-                position_amt = 0
-                if 'positionAmt' in pos.get('info', {}):
-                    position_amt = float(pos['info']['positionAmt'])
-                elif 'contracts' in pos:
-                    # 使用 contracts 字段，根据 side 确定方向
-                    contracts = float(pos['contracts'])
-                    if pos.get('side') == 'short':
-                        position_amt = -contracts
-                    else:
-                        position_amt = contracts
-
-                print(f"调试 - 持仓量: {position_amt}")
-
-                if position_amt != 0:  # 有持仓
-                    side = 'long' if position_amt > 0 else 'short'
+                if contracts > 0:
                     return {
-                        'side': side,
-                        'size': abs(position_amt),
-                        'entry_price': float(pos.get('entryPrice', 0)),
-                        'unrealized_pnl': float(pos.get('unrealizedPnl', 0)),
-                        'position_amt': position_amt,
-                        'symbol': pos['symbol']  # 返回实际的symbol用于调试
+                        'side': pos['side'],  # 'long' or 'short'
+                        'size': contracts,
+                        'entry_price': float(pos['entryPrice']) if pos['entryPrice'] else 0,
+                        'unrealized_pnl': float(pos['unrealizedPnl']) if pos['unrealizedPnl'] else 0,
+                        'leverage': float(pos['leverage']) if pos['leverage'] else TRADE_CONFIG['leverage'],
+                        'symbol': pos['symbol']
                     }
 
-        print("调试 - 未找到有效持仓")
         return None
 
     except Exception as e:
@@ -135,7 +128,7 @@ def analyze_with_deepseek(price_data):
 
     # 添加当前价格到历史记录
     price_history.append(price_data)
-    if len(price_history) > 20:  # 保留更多历史数据用于长周期分析
+    if len(price_history) > 20:
         price_history.pop(0)
 
     # 构建K线数据文本
@@ -253,24 +246,35 @@ def execute_trade(signal_data, price_data):
         return
 
     try:
+
+        order_params = {
+            'tag': 'f1ee03b510d5SUDE'  # 经纪商api参数，可以删
+        }
+
         if signal_data['signal'] == 'BUY':
             if current_position and current_position['side'] == 'short':
                 print("平空仓并开多仓...")
-                # 先平空仓，再开多仓
-                exchange.create_market_buy_order(
+                # 平空仓
+                exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
-                    current_position['size']  # 平仓数量
+                    'buy',
+                    current_position['size'],
+                    params={'reduceOnly': True, 'tag': 'f1ee03b510d5SUDE'}
                 )
-                time.sleep(1)  # 等待订单完成
-                exchange.create_market_buy_order(
+                time.sleep(1)
+                # 开多仓
+                exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
-                    TRADE_CONFIG['amount']  # 开仓数量
+                    'buy',
+                    TRADE_CONFIG['amount']
                 )
             elif not current_position:
                 print("开多仓...")
-                exchange.create_market_buy_order(
+                exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
-                    TRADE_CONFIG['amount']
+                    'buy',
+                    TRADE_CONFIG['amount'],
+                    params={'tag': 'f1ee03b510d5SUDE'}
                 )
             else:
                 print("已持有多仓，无需操作")
@@ -278,21 +282,27 @@ def execute_trade(signal_data, price_data):
         elif signal_data['signal'] == 'SELL':
             if current_position and current_position['side'] == 'long':
                 print("平多仓并开空仓...")
-                # 先平多仓，再开空仓
-                exchange.create_market_sell_order(
+                # 平多仓
+                exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
-                    current_position['size']  # 平仓数量
+                    'sell',
+                    current_position['size'],
+                    params={'reduceOnly': True, 'tag': 'f1ee03b510d5SUDE'}
                 )
-                time.sleep(1)  # 等待订单完成
-                exchange.create_market_sell_order(
+                time.sleep(1)
+                # 开空仓
+                exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
-                    TRADE_CONFIG['amount']  # 开仓数量
+                    'sell',
+                    TRADE_CONFIG['amount']
                 )
             elif not current_position:
                 print("开空仓...")
-                exchange.create_market_sell_order(
+                exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
-                    TRADE_CONFIG['amount']
+                    'sell',
+                    TRADE_CONFIG['amount'],
+                    params={'tag': 'f1ee03b510d5SUDE'}
                 )
             else:
                 print("已持有空仓，无需操作")
@@ -303,7 +313,7 @@ def execute_trade(signal_data, price_data):
 
         print("订单执行成功")
         # 更新持仓信息
-        time.sleep(2)  # 等待交易所更新
+        time.sleep(2)
         position = get_current_position()
         print(f"更新后持仓: {position}")
 
@@ -311,6 +321,7 @@ def execute_trade(signal_data, price_data):
         print(f"订单执行失败: {e}")
         import traceback
         traceback.print_exc()
+
 
 def trading_bot():
     """主交易机器人函数"""
@@ -338,7 +349,7 @@ def trading_bot():
 
 def main():
     """主函数"""
-    print("BTC/USDT 自动交易机器人启动成功！")
+    print("BTC/USDT OKX自动交易机器人启动成功！")
 
     if TRADE_CONFIG['test_mode']:
         print("当前为模拟模式，不会真实下单")
@@ -355,15 +366,12 @@ def main():
 
     # 根据时间周期设置执行频率
     if TRADE_CONFIG['timeframe'] == '1h':
-        # 每小时执行一次，在整点后的1分钟执行
         schedule.every().hour.at(":01").do(trading_bot)
         print("执行频率: 每小时一次")
     elif TRADE_CONFIG['timeframe'] == '15m':
-        # 每15分钟执行一次
         schedule.every(15).minutes.do(trading_bot)
         print("执行频率: 每15分钟一次")
     else:
-        # 默认1小时
         schedule.every().hour.at(":01").do(trading_bot)
         print("执行频率: 每小时一次")
 
