@@ -29,7 +29,7 @@ exchange = ccxt.okx({
 # 交易参数配置
 TRADE_CONFIG = {
     'symbol': 'BTC/USDT:USDT',  # OKX的合约符号格式
-    'amount': 0.001,  # 交易数量 (BTC)
+    'amount': 0.01,  # 交易数量 (BTC)
     'leverage': 10,  # 杠杆倍数
     'timeframe': '15m',  # 使用15分钟K线
     'test_mode': False,  # 测试模式
@@ -57,9 +57,9 @@ def setup_exchange():
         usdt_balance = balance['USDT']['free']
         print(f"当前USDT余额: {usdt_balance:.2f}")
 
-        # 设置持仓模式 (双向持仓)
-        exchange.set_position_mode(True, TRADE_CONFIG['symbol'])
-        print("设置双向持仓模式")
+        # # 设置持仓模式 (双向持仓)
+        # exchange.set_position_mode(False, TRADE_CONFIG['symbol'])
+        # print("设置单向持仓")
 
         return True
     except Exception as e:
@@ -246,11 +246,6 @@ def execute_trade(signal_data, price_data):
         return
 
     try:
-
-        order_params = {
-            'tag': 'f1ee03b510d5SUDE'  # 经纪商api参数，可以删
-        }
-
         if signal_data['signal'] == 'BUY':
             if current_position and current_position['side'] == 'short':
                 print("平空仓并开多仓...")
@@ -266,7 +261,8 @@ def execute_trade(signal_data, price_data):
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
                     'buy',
-                    TRADE_CONFIG['amount']
+                    TRADE_CONFIG['amount'],
+                    params={'tag': 'f1ee03b510d5SUDE'}
                 )
             elif not current_position:
                 print("开多仓...")
@@ -294,7 +290,8 @@ def execute_trade(signal_data, price_data):
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
                     'sell',
-                    TRADE_CONFIG['amount']
+                    TRADE_CONFIG['amount'],
+                    params={'tag': 'f1ee03b510d5SUDE'}
                 )
             elif not current_position:
                 print("开空仓...")

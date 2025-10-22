@@ -236,16 +236,12 @@ def analyze_with_deepseek(price_data):
 
 
 def execute_trade(signal_data, price_data):
-    """执行交易"""
-    global position
-
+    """执行交易（简化版）"""
     current_position = get_current_position()
 
     print(f"交易信号: {signal_data['signal']}")
     print(f"信心程度: {signal_data['confidence']}")
     print(f"理由: {signal_data['reason']}")
-    print(f"止损: ${signal_data['stop_loss']:,.2f}")
-    print(f"止盈: ${signal_data['take_profit']:,.2f}")
     print(f"当前持仓: {current_position}")
 
     if TRADE_CONFIG['test_mode']:
@@ -253,57 +249,49 @@ def execute_trade(signal_data, price_data):
         return
 
     try:
+        # 简化的交易逻辑：只处理单向持仓
         if signal_data['signal'] == 'BUY':
             if current_position and current_position['side'] == 'short':
-                print("平空仓并开多仓...")
-                # 先平空仓，再开多仓
+                # 平空仓
+                print("平空仓...")
                 exchange.create_market_buy_order(
                     TRADE_CONFIG['symbol'],
-                    current_position['size']  # 平仓数量
+                    current_position['size'],
+                    {'posSide': 'short'}
                 )
-                time.sleep(1)  # 等待订单完成
-                exchange.create_market_buy_order(
-                    TRADE_CONFIG['symbol'],
-                    TRADE_CONFIG['amount']  # 开仓数量
-                )
-            elif not current_position:
+            elif not current_position or current_position['side'] == 'long':
+                # 开多仓或加多仓
                 print("开多仓...")
                 exchange.create_market_buy_order(
                     TRADE_CONFIG['symbol'],
-                    TRADE_CONFIG['amount']
+                    TRADE_CONFIG['amount'],
+                    {'posSide': 'long'}
                 )
-            else:
-                print("已持有多仓，无需操作")
 
         elif signal_data['signal'] == 'SELL':
             if current_position and current_position['side'] == 'long':
-                print("平多仓并开空仓...")
-                # 先平多仓，再开空仓
+                # 平多仓
+                print("平多仓...")
                 exchange.create_market_sell_order(
                     TRADE_CONFIG['symbol'],
-                    current_position['size']  # 平仓数量
+                    current_position['size'],
+                    {'posSide': 'long'}
                 )
-                time.sleep(1)  # 等待订单完成
-                exchange.create_market_sell_order(
-                    TRADE_CONFIG['symbol'],
-                    TRADE_CONFIG['amount']  # 开仓数量
-                )
-            elif not current_position:
+            elif not current_position or current_position['side'] == 'short':
+                # 开空仓或加空仓
                 print("开空仓...")
                 exchange.create_market_sell_order(
                     TRADE_CONFIG['symbol'],
-                    TRADE_CONFIG['amount']
+                    TRADE_CONFIG['amount'],
+                    {'posSide': 'short'}
                 )
-            else:
-                print("已持有空仓，无需操作")
 
         elif signal_data['signal'] == 'HOLD':
             print("建议观望，不执行交易")
             return
 
         print("订单执行成功")
-        # 更新持仓信息
-        time.sleep(2)  # 等待交易所更新
+        time.sleep(2)
         position = get_current_position()
         print(f"更新后持仓: {position}")
 
