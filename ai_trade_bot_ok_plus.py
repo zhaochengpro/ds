@@ -580,7 +580,7 @@ def execute_trade(signal_data, price_data):
 
         # 只有在需要额外保证金时才检查
         if required_margin > 0:
-            if required_margin > usdt_balance * 0.8:
+            if required_margin > usdt_balance:
                 logger.warning(f"⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
                 return
         else:
