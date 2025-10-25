@@ -520,7 +520,7 @@ def execute_trade(signal_data, price_data):
     logger.info(f"理由: {signal_data['reason']}")
     logger.info(f"止损: ${signal_data['stop_loss']:,.2f}")
     logger.info(f"止盈: ${signal_data['take_profit']:,.2f}")
-    logger.info(f"购买数量: {signal_data['amount']:,.3f} {COIN}")
+    logger.info(f"购买数量: {signal_data['amount']:,.5f} {COIN}")
     logger.info(f"当前持仓: {current_position}")
 
     # 风险管理：低信心信号不执行
@@ -537,9 +537,9 @@ def execute_trade(signal_data, price_data):
         usdt_balance = get_usdt_balance()
 
         if float(signal_data['usdt_amount']) > float(usdt_balance):
-            logger.warning(f"⚠️ 余额不足，跳过交易。需要: {signal_data['usdt_amount']:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
+            logger.warning(f"⚠️ 余额不足，跳过交易。需要: {signal_data['usdt_amount']:.5f} USDT, 可用: {usdt_balance:.2f} USDT")
             return
-        order_amount = float(f"{signal_data['amount']:,.3f}") * TRADE_CONFIG['leverage']
+        order_amount = float(f"{signal_data['amount']:,.5f}") * TRADE_CONFIG['leverage']
         # 智能保证金检查
         required_margin = 0
 
