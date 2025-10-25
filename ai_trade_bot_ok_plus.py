@@ -595,7 +595,7 @@ def execute_trade(signal_data, price_data):
                     TRADE_CONFIG['symbol'],
                     'buy',
                     current_position['size'],
-                    params={'reduceOnly': True, 'tag': 'f1ee03b510d5SUDE'}
+                    params={'reduceOnly': True, 'tag': 'f1ee03b510d5SUDE', 'tdMode': 'isolated', 'opSide': 'short'}
                 )
                 time.sleep(1)
                 # 开多仓
@@ -603,7 +603,7 @@ def execute_trade(signal_data, price_data):
                     TRADE_CONFIG['symbol'],
                     'buy',
                     order_amount,
-                    params={'tag': 'f1ee03b510d5SUDE'}
+                    params={'tag': 'f1ee03b510d5SUDE', 'tdMode': 'isolated', 'opSide': 'long'}
                 )
             elif len(current_position) > 0 and isExistSpecPos(current_position, 'long'):
                 logger.info("已有多头持仓，保持现状")
@@ -614,7 +614,7 @@ def execute_trade(signal_data, price_data):
                     TRADE_CONFIG['symbol'],
                     'buy',
                     order_amount,
-                    params={'tag': 'f1ee03b510d5SUDE'}
+                    params={'tag': 'f1ee03b510d5SUDE', 'tdMode': 'isolated', 'opSide': 'long'}
                 )
 
         elif signal_data['signal'] == 'SELL':
@@ -625,7 +625,7 @@ def execute_trade(signal_data, price_data):
                     TRADE_CONFIG['symbol'],
                     'sell',
                     current_position['size'],
-                    params={'reduceOnly': True, 'tag': 'f1ee03b510d5SUDE'}
+                    params={'reduceOnly': True, 'tag': 'f1ee03b510d5SUDE', 'tdMode': 'isolated', 'opSide': 'long'}
                 )
                 time.sleep(1)
                 # 开空仓
@@ -633,7 +633,7 @@ def execute_trade(signal_data, price_data):
                     TRADE_CONFIG['symbol'],
                     'sell',
                     order_amount,
-                    params={'tag': 'f1ee03b510d5SUDE'}
+                    params={'tag': 'f1ee03b510d5SUDE', 'tdMode': 'isolated', 'opSide': 'short'}
                 )
             if len(current_position) > 0 and isExistSpecPos(current_position, 'short'):
                 logger.info("已有空头持仓，保持现状")
@@ -644,7 +644,7 @@ def execute_trade(signal_data, price_data):
                     TRADE_CONFIG['symbol'],
                     'sell',
                     order_amount,
-                    params={'tag': 'f1ee03b510d5SUDE'}
+                    params={'tag': 'f1ee03b510d5SUDE', 'tdMode': 'isolated', 'opSide': 'short'}
                 )
 
         logger.info("订单执行成功")
