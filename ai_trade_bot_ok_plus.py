@@ -553,7 +553,7 @@ def execute_trade(signal_data, price_data):
         usdt_balance = balance['USDT']['free']
         required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
 
-        if required_margin > usdt_balance * 0.8:  # 使用不超过80%的余额
+        if required_margin >= usdt_balance:  # 使用不超过80%的余额
             print(f"⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
             return
 
