@@ -573,7 +573,7 @@ def execute_trade(signal_data, price_data):
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
                     'buy',
-                    TRADE_CONFIG['amount'],
+                    TRADE_CONFIG['amount'] * TRADE_CONFIG['leverage'],
                     params={'tag': 'f1ee03b510d5SUDE', 'posSide' :posSide}
                 )
             elif current_position and current_position['side'] == 'long':
@@ -584,7 +584,7 @@ def execute_trade(signal_data, price_data):
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
                     'buy',
-                    TRADE_CONFIG['amount'],
+                    TRADE_CONFIG['amount'] * TRADE_CONFIG['leverage'],
                     params={'tag': 'f1ee03b510d5SUDE', 'posSide' :posSide}
                 )
 
@@ -603,7 +603,7 @@ def execute_trade(signal_data, price_data):
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
                     'sell',
-                    TRADE_CONFIG['amount'],
+                    TRADE_CONFIG['amount'] * TRADE_CONFIG['leverage'],
                     params={'tag': 'f1ee03b510d5SUDE', 'posSide' :posSide}
                 )
             elif current_position and current_position['side'] == 'short':
@@ -614,7 +614,7 @@ def execute_trade(signal_data, price_data):
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
                     'sell',
-                    TRADE_CONFIG['amount'],
+                    TRADE_CONFIG['amount'] * TRADE_CONFIG['leverage'],
                     params={'tag': 'f1ee03b510d5SUDE', 'posSide' :posSide}
                 )
 
