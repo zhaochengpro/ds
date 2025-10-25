@@ -536,7 +536,7 @@ def execute_trade(signal_data, price_data):
     print(f"购买币相应USDT数量: ${signal_data['usdt_amount']:,.2f}")
     print(f"当前持仓: {current_position}")
 
-    TRADE_CONFIG['amount'] = float(f"{signal_data['amount']:,.5f}")
+    TRADE_CONFIG['amount'] = float(f"{signal_data['amount']:,.5f}") * TRADE_CONFIG['leverage']
 
     # 风险管理：低信心信号不执行
     if signal_data['confidence'] == 'LOW' and not TRADE_CONFIG['test_mode']:
