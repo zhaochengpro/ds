@@ -8,15 +8,18 @@ from datetime import datetime
 import json
 import re
 from dotenv import load_dotenv
+import argparse
+import logging
+from logging.handlers import RotatingFileHandler
 
 load_dotenv()
 
 # 初始化DeepSeek客户端
 deepseek_client = OpenAI(
-    api_key=os.getenv('DEEPSEEK_API_KEY'),
-    base_url="https://api.deepseek.com"
+    api_key=os.getenv('OPENROUTER_API_KEY'),
+    base_url="https://openrouter.ai/api/v1"
 )
-
+AI_MODEL = os.getenv('DEEPSEEK_MODEL', 'qwen/qwen3-max')
 # 初始化OKX交易所
 exchange = ccxt.okx({
     'options': {
@@ -27,10 +30,44 @@ exchange = ccxt.okx({
     'password': os.getenv('OKX_PASSWORD'),  # OKX需要交易密码
 })
 
+def parse_args():
+    p = argparse.ArgumentParser(
+        prog="ai_trade_bot_ok_plus.py",
+        description="这是一个示例：如何用 argparse 获取命令行参数",
+    )
+    # 添加「位置参数」（必选），类型为 str
+    p.add_argument("symbol", help="代币符号")
+    return p.parse_args()
+
+
+args = parse_args()
+
+COIN = args.symbol
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, f"{COIN.lower()}_trade_bot.log")
+
+logger = logging.getLogger("ai_trade_bot")
+logger.setLevel(logging.INFO)
+logger.propagate = False
+
+if not logger.handlers:
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+
+    file_handler = RotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=5, encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
 # 交易参数配置 - 结合两个版本的优点
 TRADE_CONFIG = {
-    'symbol': 'BTC/USDT:USDT',  # OKX的合约符号格式
-    'amount': 0.01,  # 交易数量 (BTC)
+    'symbol': f"{COIN}/USDT:USDT",  # OKX的合约符号格式
+    'amount': 0.013,  # 交易数量 (BTC)
     'leverage': 10,  # 杠杆倍数
     'timeframe': '15m',  # 使用15分钟K线
     'test_mode': False,  # 测试模式
@@ -51,22 +88,23 @@ position = None
 def setup_exchange():
     """设置交易所参数"""
     try:
+        # exchange.httpProxy = 'http://127.0.0.1:1080/'
+        exchange.httpsProxy = 'http://127.0.0.1:1080/'
         # OKX设置杠杆
         exchange.set_leverage(
             TRADE_CONFIG['leverage'],
             TRADE_CONFIG['symbol'],
             {'mgnMode': 'cross'}  # 全仓模式
         )
-        print(f"设置杠杆倍数: {TRADE_CONFIG['leverage']}x")
+        logger.info(f"设置杠杆倍数: {TRADE_CONFIG['leverage']}x")
 
         # 获取余额
-        balance = exchange.fetch_balance()
-        usdt_balance = balance['USDT']['free']
-        print(f"当前USDT余额: {usdt_balance:.2f}")
+        usdt_balance = get_usdt_balance()
+        logger.info(f"当前USDT余额: {usdt_balance:.2f}")
 
         return True
     except Exception as e:
-        print(f"交易所设置失败: {e}")
+        logger.error(f"交易所设置失败: {e}")
         return False
 
 
@@ -112,7 +150,7 @@ def calculate_technical_indicators(df):
 
         return df
     except Exception as e:
-        print(f"技术指标计算失败: {e}")
+        logger.error(f"技术指标计算失败: {e}")
         return df
 
 
@@ -139,7 +177,7 @@ def get_support_resistance_levels(df, lookback=20):
             'price_vs_support': ((current_price - support_level) / support_level) * 100
         }
     except Exception as e:
-        print(f"支撑阻力计算失败: {e}")
+        logger.error(f"支撑阻力计算失败: {e}")
         return {}
 
 
@@ -171,7 +209,7 @@ def get_market_trend(df):
             'rsi_level': df['rsi'].iloc[-1]
         }
     except Exception as e:
-        print(f"趋势分析失败: {e}")
+        logger.error(f"趋势分析失败: {e}")
         return {}
 
 
@@ -203,7 +241,7 @@ def get_btc_ohlcv_enhanced():
             'volume': current_data['volume'],
             'timeframe': TRADE_CONFIG['timeframe'],
             'price_change': ((current_data['close'] - previous_data['close']) / previous_data['close']) * 100,
-            'kline_data': df[['timestamp', 'open', 'high', 'low', 'close', 'volume']].tail(10).to_dict('records'),
+            'kline_data': df[['timestamp', 'open', 'high', 'low', 'close', 'volume', 'sma_5', 'sma_20','sma_50','ema_12','ema_26','macd', 'rsi', 'bb_middle', 'bb_upper', 'bb_lower', 'bb_position']].to_dict('records'),
             'technical_data': {
                 'sma_5': current_data.get('sma_5', 0),
                 'sma_20': current_data.get('sma_20', 0),
@@ -222,7 +260,7 @@ def get_btc_ohlcv_enhanced():
             'full_data': df
         }
     except Exception as e:
-        print(f"获取增强K线数据失败: {e}")
+        logger.error(f"获取增强K线数据失败: {e}")
         return None
 
 
@@ -240,7 +278,8 @@ def generate_technical_analysis_text(price_data):
         return float(value) if value and pd.notna(value) else default
 
     analysis_text = f"""
-    【技术指标分析】
+    提示：以下所有数据都由96根15分钟 {COIN}/USDT k线生成
+    【技术指标分析】（该数据为程序计算生成，仅供参考）
     📈 移动平均线:
     - 5周期: {safe_float(tech['sma_5']):.2f} | 价格相对: {(price_data['price'] - safe_float(tech['sma_5'])) / safe_float(tech['sma_5']) * 100:+.2f}%
     - 20周期: {safe_float(tech['sma_20']):.2f} | 价格相对: {(price_data['price'] - safe_float(tech['sma_20'])) / safe_float(tech['sma_20']) * 100:+.2f}%
@@ -270,29 +309,26 @@ def get_current_position():
     """获取当前持仓情况 - OKX版本"""
     try:
         positions = exchange.fetch_positions([TRADE_CONFIG['symbol']])
-
+        filterPoistions = []
         for pos in positions:
             if pos['symbol'] == TRADE_CONFIG['symbol']:
                 contracts = float(pos['contracts']) if pos['contracts'] else 0
 
                 if contracts > 0:
-                    return {
+                    filterPoistions.append({
                         'side': pos['side'],  # 'long' or 'short'
                         'size': contracts,
                         'entry_price': float(pos['entryPrice']) if pos['entryPrice'] else 0,
                         'unrealized_pnl': float(pos['unrealizedPnl']) if pos['unrealizedPnl'] else 0,
                         'leverage': float(pos['leverage']) if pos['leverage'] else TRADE_CONFIG['leverage'],
                         'symbol': pos['symbol']
-                    }
+                    })
 
-        return None
+        return filterPoistions
 
     except Exception as e:
-        print(f"获取持仓失败: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("获取持仓失败")
         return None
-
 
 def safe_json_parse(json_str):
     """安全解析JSON，处理格式不规范的情况"""
@@ -307,8 +343,8 @@ def safe_json_parse(json_str):
             json_str = re.sub(r',\s*]', ']', json_str)
             return json.loads(json_str)
         except json.JSONDecodeError as e:
-            print(f"JSON解析失败，原始内容: {json_str}")
-            print(f"错误详情: {e}")
+            logger.error(f"JSON解析失败，原始内容: {json_str}")
+            logger.error(f"错误详情: {e}")
             return None
 
 
@@ -331,11 +367,11 @@ def analyze_with_deepseek(price_data):
     technical_analysis = generate_technical_analysis_text(price_data)
 
     # 构建K线数据文本
-    kline_text = f"【最近5根{TRADE_CONFIG['timeframe']}K线数据】\n"
+    kline_text = f"【最近24小时96根15分钟K线数据】\n"
     for i, kline in enumerate(price_data['kline_data'][-5:]):
         trend = "阳线" if kline['close'] > kline['open'] else "阴线"
         change = ((kline['close'] - kline['open']) / kline['open']) * 100
-        kline_text += f"K线{i + 1}: {trend} 开盘:{kline['open']:.2f} 收盘:{kline['close']:.2f} 涨跌:{change:+.2f}%\n"
+        kline_text += f"K线{i + 1}: {trend} 开盘:{kline['open']:.2f} 收盘:{kline['close']:.2f} 涨跌:{change:+.2f}% 交易量:{kline['volume']} sma5:{kline['sma_5']} sma20:{kline['sma_20']} sma50:{kline['sma_50']} ema12:{kline['ema_12']} ema26:{kline['ema_26']} macd:{kline['macd']} rsi:{kline['rsi']} 20期布林线中线，上线，下线分别为:{kline['bb_middle']}, {kline['bb_upper']}, {kline['bb_lower']}\n"
 
     # 添加上次交易信号
     signal_text = ""
@@ -344,11 +380,13 @@ def analyze_with_deepseek(price_data):
         signal_text = f"\n【上次交易信号】\n信号: {last_signal.get('signal', 'N/A')}\n信心: {last_signal.get('confidence', 'N/A')}"
 
     # 添加当前持仓信息
-    current_pos = get_current_position()
-    position_text = "无持仓" if not current_pos else f"{current_pos['side']}仓, 数量: {current_pos['size']}, 盈亏: {current_pos['unrealized_pnl']:.2f}USDT"
+    filter_positions = get_current_position()
+    position_text = "无持仓" if len(filter_positions) else ""
+    for current_pos in filter_positions:
+        position_text += "无持仓" if not current_pos else f"{current_pos['side']}仓, 数量: {current_pos['size']}, 盈亏: {current_pos['unrealized_pnl']:.2f}USDT \n"
 
     prompt = f"""
-    你是一个专业的加密货币交易分析师。请基于以下BTC/USDT {TRADE_CONFIG['timeframe']}周期数据进行分析：
+    你是一个专业的加密货币交易分析师。请基于以下{COIN}/USDT {TRADE_CONFIG['timeframe']}周期数据进行分析：
 
     {kline_text}
 
@@ -361,9 +399,10 @@ def analyze_with_deepseek(price_data):
     - 时间: {price_data['timestamp']}
     - 本K线最高: ${price_data['high']:,.2f}
     - 本K线最低: ${price_data['low']:,.2f}
-    - 本K线成交量: {price_data['volume']:.2f} BTC
+    - 本K线成交量: {price_data['volume']:.2f} {COIN}
     - 价格变化: {price_data['price_change']:+.2f}%
     - 当前持仓: {position_text}
+    - 当前账户可用余额: {get_usdt_balance() * 0.99:.2f} USDT
 
     【分析要求】
     1. 基于{TRADE_CONFIG['timeframe']}K线趋势和技术指标给出交易信号: BUY(买入) / SELL(卖出) / HOLD(观望)
@@ -371,6 +410,9 @@ def analyze_with_deepseek(price_data):
     3. 基于技术分析建议合理的止损价位
     4. 基于技术分析建议合理的止盈价位
     5. 评估信号信心程度
+    6. 通过当前账户可用余额计算建议购买的{COIN}数量
+    7. 返回建议购买的USDT数量
+    8. 要保证合理的仓位管理，只有超高信息的时候才能全仓买入，否则进行合理的仓位管理
 
     【重要格式要求】
     - 必须返回纯JSON格式，不要有任何额外文本
@@ -385,13 +427,15 @@ def analyze_with_deepseek(price_data):
         "reason": "分析理由",
         "stop_loss": 具体价格,
         "take_profit": 具体价格,
-        "confidence": "HIGH|MEDIUM|LOW"
+        "confidence": "HIGH|MEDIUM|LOW",
+        "amount": 具体可购买{COIN}数量,
+        "usdt_amount": 具体购买的USDT数量
     }}
     """
 
     try:
         response = deepseek_client.chat.completions.create(
-            model="deepseek-chat",
+            model=AI_MODEL,
             messages=[
                 {"role": "system",
                  "content": f"您是一位专业的交易员，专注于{TRADE_CONFIG['timeframe']}周期趋势分析。请结合K线形态和技术指标做出判断，并严格遵循JSON格式要求。"},
@@ -403,7 +447,7 @@ def analyze_with_deepseek(price_data):
 
         # 安全解析JSON
         result = response.choices[0].message.content
-        print(f"DeepSeek原始回复: {result}")
+        # print(f"DeepSeek原始回复: {result}")
 
         # 提取JSON部分
         start_idx = result.find('{')
@@ -432,19 +476,35 @@ def analyze_with_deepseek(price_data):
         # 信号统计
         signal_count = len([s for s in signal_history if s.get('signal') == signal_data['signal']])
         total_signals = len(signal_history)
-        print(f"信号统计: {signal_data['signal']} (最近{total_signals}次中出现{signal_count}次)")
+        logger.info(f"信号统计: {signal_data['signal']} (最近{total_signals}次中出现{signal_count}次)")
 
         # 信号连续性检查
         if len(signal_history) >= 3:
             last_three = [s['signal'] for s in signal_history[-3:]]
             if len(set(last_three)) == 1:
-                print(f"⚠️ 注意：连续3次{signal_data['signal']}信号")
+                logger.warning(f"⚠️ 注意：连续3次{signal_data['signal']}信号")
 
         return signal_data
 
     except Exception as e:
-        print(f"DeepSeek分析失败: {e}")
+        logger.exception("DeepSeek分析失败")
         return create_fallback_signal(price_data)
+    
+def get_usdt_balance():
+    # 获取账户余额
+    balance = exchange.fetch_balance()
+    usdt_balance = balance['USDT']['free']
+    return usdt_balance
+
+
+
+def isExistSpecPos(positions, side):
+    '''判断是否有指定方向订单存在'''
+    for pos in positions:
+        if pos['side'] == side:
+            return True
+        
+    return False
 
 
 def execute_trade(signal_data, price_data):
@@ -453,142 +513,147 @@ def execute_trade(signal_data, price_data):
 
     current_position = get_current_position()
 
-    print(f"交易信号: {signal_data['signal']}")
-    print(f"信心程度: {signal_data['confidence']}")
-    print(f"理由: {signal_data['reason']}")
-    print(f"止损: ${signal_data['stop_loss']:,.2f}")
-    print(f"止盈: ${signal_data['take_profit']:,.2f}")
-    print(f"当前持仓: {current_position}")
+    # print(signal_data)
+
+    logger.info(f"交易信号: {signal_data['signal']}")
+    logger.info(f"信心程度: {signal_data['confidence']}")
+    logger.info(f"理由: {signal_data['reason']}")
+    logger.info(f"止损: ${signal_data['stop_loss']:,.2f}")
+    logger.info(f"止盈: ${signal_data['take_profit']:,.2f}")
+    logger.info(f"购买数量: {signal_data['amount']:,.3f} {COIN}")
+    logger.info(f"当前持仓: {current_position}")
 
     # 风险管理：低信心信号不执行
     if signal_data['confidence'] == 'LOW' and not TRADE_CONFIG['test_mode']:
-        print("⚠️ 低信心信号，跳过执行")
+        logger.warning("⚠️ 低信心信号，跳过执行")
         return
 
     if TRADE_CONFIG['test_mode']:
-        print("测试模式 - 仅模拟交易")
+        logger.info("测试模式 - 仅模拟交易")
         return
 
     try:
         # 获取账户余额
-        balance = exchange.fetch_balance()
-        usdt_balance = balance['USDT']['free']
+        usdt_balance = get_usdt_balance()
 
+        if float(signal_data['usdt_amount']) > float(usdt_balance):
+            logger.warning(f"⚠️ 余额不足，跳过交易。需要: {signal_data['usdt_amount']:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
+            return
+        order_amount = float(f"{signal_data['amount']:,.3f}") * TRADE_CONFIG['leverage']
         # 智能保证金检查
         required_margin = 0
 
         if signal_data['signal'] == 'BUY':
-            if current_position and current_position['side'] == 'short':
+            if len(current_position) > 0 and isExistSpecPos(current_position, 'short'):
                 # 平空仓 + 开多仓：需要额外保证金
-                required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
+                required_margin = price_data['price'] * order_amount / TRADE_CONFIG['leverage']
                 operation_type = "平空开多"
-            elif not current_position:
-                # 开多仓：需要保证金
-                required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
-                operation_type = "开多仓"
-            else:
+            elif len(current_position) > 0 and isExistSpecPos(current_position, 'long'):
                 # 已持有多仓：不需要额外保证金
                 required_margin = 0
                 operation_type = "保持多仓"
+            elif len(current_position) == 0:
+                # 开多仓：需要保证金
+                required_margin = price_data['price'] * order_amount / TRADE_CONFIG['leverage']
+                operation_type = "开多仓"
+
 
         elif signal_data['signal'] == 'SELL':
-            if current_position and current_position['side'] == 'long':
+            if len(current_position) > 0 and isExistSpecPos(current_position, 'long'):
                 # 平多仓 + 开空仓：需要额外保证金
-                required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
+                required_margin = price_data['price'] * order_amount / TRADE_CONFIG['leverage']
                 operation_type = "平多开空"
-            elif not current_position:
-                # 开空仓：需要保证金
-                required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
-                operation_type = "开空仓"
-            else:
+            elif len(current_position) > 0 and isExistSpecPos(current_position, 'short'):
                 # 已持有空仓：不需要额外保证金
                 required_margin = 0
                 operation_type = "保持空仓"
+            elif len(current_position) == 0:
+                # 开空仓：需要保证金
+                required_margin = price_data['price'] * order_amount / TRADE_CONFIG['leverage']
+                operation_type = "开空仓"
 
         elif signal_data['signal'] == 'HOLD':
-            print("建议观望，不执行交易")
+            logger.info("建议观望，不执行交易")
             return
 
-        print(f"操作类型: {operation_type}, 需要保证金: {required_margin:.2f} USDT")
+        logger.info(f"操作类型: {operation_type}, 需要保证金: {required_margin:.2f} USDT")
 
         # 只有在需要额外保证金时才检查
         if required_margin > 0:
             if required_margin > usdt_balance * 0.8:
-                print(f"⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
+                logger.warning(f"⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
                 return
         else:
-            print("✅ 无需额外保证金，继续执行")
+            logger.info("✅ 无需额外保证金，继续执行")
 
         # 执行交易逻辑   tag 是我的经纪商api（不拿白不拿），不会影响大家返佣，介意可以删除
         if signal_data['signal'] == 'BUY':
-            if current_position and current_position['side'] == 'short':
-                print("平空仓并开多仓...")
+            if len(current_position) > 0 and isExistSpecPos(current_position, 'short'):
+                logger.info("平空仓并开多仓...")
                 # 平空仓
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
                     'buy',
                     current_position['size'],
-                    params={'reduceOnly': True, 'tag': 'f1ee03b510d5SUDE'}
+                    params={'reduceOnly': True, 'tag': 'f1ee03b510d5SUDE', 'tdMode': 'isolated'}
                 )
                 time.sleep(1)
                 # 开多仓
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
                     'buy',
-                    TRADE_CONFIG['amount'],
-                    params={'tag': 'f1ee03b510d5SUDE'}
+                    order_amount,
+                    params={'tag': 'f1ee03b510d5SUDE', 'tdMode': 'isolated'}
                 )
-            elif current_position and current_position['side'] == 'long':
-                print("已有多头持仓，保持现状")
+            elif len(current_position) > 0 and isExistSpecPos(current_position, 'long'):
+                logger.info("已有多头持仓，保持现状")
             else:
                 # 无持仓时开多仓
-                print("开多仓...")
+                logger.info("开多仓...")
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
                     'buy',
-                    TRADE_CONFIG['amount'],
-                    params={'tag': 'f1ee03b510d5SUDE'}
+                    order_amount,
+                    params={'tag': 'f1ee03b510d5SUDE', 'tdMode': 'isolated'}
                 )
 
         elif signal_data['signal'] == 'SELL':
-            if current_position and current_position['side'] == 'long':
-                print("平多仓并开空仓...")
+            if len(current_position) > 0 and isExistSpecPos(current_position, 'long'):
+                logger.info("平多仓并开空仓...")
                 # 平多仓
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
                     'sell',
                     current_position['size'],
-                    params={'reduceOnly': True, 'tag': 'f1ee03b510d5SUDE'}
+                    params={'reduceOnly': True, 'tag': 'f1ee03b510d5SUDE', 'tdMode': 'isolated'}
                 )
                 time.sleep(1)
                 # 开空仓
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
                     'sell',
-                    TRADE_CONFIG['amount'],
-                    params={'tag': 'f1ee03b510d5SUDE'}
+                    order_amount,
+                    params={'tag': 'f1ee03b510d5SUDE', 'tdMode': 'isolated'}
                 )
-            elif current_position and current_position['side'] == 'short':
-                print("已有空头持仓，保持现状")
+            if len(current_position) > 0 and isExistSpecPos(current_position, 'short'):
+                logger.info("已有空头持仓，保持现状")
             else:
                 # 无持仓时开空仓
-                print("开空仓...")
+                logger.info("开空仓...")
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'],
                     'sell',
-                    TRADE_CONFIG['amount'],
-                    params={'tag': 'f1ee03b510d5SUDE'}
+                    order_amount,
+                    params={'tag': 'f1ee03b510d5SUDE', 'tdMode': 'isolated'}
                 )
 
-        print("订单执行成功")
+        logger.info("订单执行成功")
         time.sleep(2)
         position = get_current_position()
-        print(f"更新后持仓: {position}")
+        logger.info(f"更新后持仓: {position}")
 
     except Exception as e:
-        print(f"订单执行失败: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("订单执行失败")
 
 
 def analyze_with_deepseek_with_retry(price_data, max_retries=2):
@@ -599,11 +664,11 @@ def analyze_with_deepseek_with_retry(price_data, max_retries=2):
             if signal_data and not signal_data.get('is_fallback', False):
                 return signal_data
 
-            print(f"第{attempt + 1}次尝试失败，进行重试...")
+            logger.warning(f"第{attempt + 1}次尝试失败，进行重试...")
             time.sleep(1)
 
         except Exception as e:
-            print(f"第{attempt + 1}次尝试异常: {e}")
+            logger.warning(f"第{attempt + 1}次尝试异常: {e}")
             if attempt == max_retries - 1:
                 return create_fallback_signal(price_data)
             time.sleep(1)
@@ -613,24 +678,24 @@ def analyze_with_deepseek_with_retry(price_data, max_retries=2):
 
 def trading_bot():
     """主交易机器人函数"""
-    print("\n" + "=" * 60)
-    print(f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info(f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("=" * 60)
 
     # 1. 获取增强版K线数据
     price_data = get_btc_ohlcv_enhanced()
     if not price_data:
         return
 
-    print(f"BTC当前价格: ${price_data['price']:,.2f}")
-    print(f"数据周期: {TRADE_CONFIG['timeframe']}")
-    print(f"价格变化: {price_data['price_change']:+.2f}%")
+    logger.info(f"{COIN}当前价格: ${price_data['price']:,.2f}")
+    logger.info(f"数据周期: {TRADE_CONFIG['timeframe']}")
+    logger.info(f"价格变化: {price_data['price_change']:+.2f}%")
 
     # 2. 使用DeepSeek分析（带重试）
     signal_data = analyze_with_deepseek_with_retry(price_data)
 
     if signal_data.get('is_fallback', False):
-        print("⚠️ 使用备用交易信号")
+        logger.warning("⚠️ 使用备用交易信号")
 
     # 3. 执行交易
     execute_trade(signal_data, price_data)
@@ -638,32 +703,37 @@ def trading_bot():
 
 def main():
     """主函数"""
-    print("BTC/USDT OKX自动交易机器人启动成功！")
-    print("融合技术指标策略 + OKX实盘接口")
+    # args = parse_args()
+    # COIN = args.symbol
+    # TRADE_CONFIG['symbol'] = f"{COIN}/USDT:USDT"
+    logger.info(f"{COIN}/USDT OKX自动交易机器人启动成功！")
+    logger.info("融合技术指标策略 + OKX实盘接口")
 
     if TRADE_CONFIG['test_mode']:
-        print("当前为模拟模式，不会真实下单")
+        logger.info("当前为模拟模式，不会真实下单")
     else:
-        print("实盘交易模式，请谨慎操作！")
+        logger.warning("实盘交易模式，请谨慎操作！")
 
-    print(f"交易周期: {TRADE_CONFIG['timeframe']}")
-    print("已启用完整技术指标分析和持仓跟踪功能")
+    logger.info(f"交易周期: {TRADE_CONFIG['timeframe']}")
+    logger.info("已启用完整技术指标分析和持仓跟踪功能")
 
     # 设置交易所
     if not setup_exchange():
-        print("交易所初始化失败，程序退出")
+        logger.error("交易所初始化失败，程序退出")
         return
 
     # 根据时间周期设置执行频率
-    if TRADE_CONFIG['timeframe'] == '1h':
-        schedule.every().hour.at(":01").do(trading_bot)
-        print("执行频率: 每小时一次")
-    elif TRADE_CONFIG['timeframe'] == '15m':
-        schedule.every(15).minutes.do(trading_bot)
-        print("执行频率: 每15分钟一次")
-    else:
-        schedule.every().hour.at(":01").do(trading_bot)
-        print("执行频率: 每小时一次")
+    # if TRADE_CONFIG['timeframe'] == '1h':
+    #     schedule.every().hour.at(":01").do(trading_bot)
+    #     print("执行频率: 每小时一次")
+    # elif TRADE_CONFIG['timeframe'] == '15m':
+    #     schedule.every(15).minutes.do(trading_bot)
+    #     print("执行频率: 每15分钟一次")
+    # else:
+    #     schedule.every().hour.at(":01").do(trading_bot)
+    #     print("执行频率: 每小时一次")
+
+    schedule.every(5).minutes.do(trading_bot)
 
     # 立即执行一次
     trading_bot()

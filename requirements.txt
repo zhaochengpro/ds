@@ -5,3 +5,5 @@ schedule
 python-dotenv
 requests
 urllib3
+python-okx
+argparse
