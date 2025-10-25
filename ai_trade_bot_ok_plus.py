@@ -556,7 +556,9 @@ def execute_trade(signal_data, price_data):
         if required_margin >= usdt_balance:  # 使用不超过80%的余额
             print(f"⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
             return
-
+        
+        tp = signal_data['take_profit']
+        sl = signal_data['stop_loss']
         # 执行交易逻辑   tag 是我的经纪商api（不拿白不拿），不会影响大家返佣，介意可以删除
         if signal_data['signal'] == 'BUY':
             if current_position and current_position['side'] == 'short':
@@ -574,7 +576,12 @@ def execute_trade(signal_data, price_data):
                     TRADE_CONFIG['symbol'],
                     'buy',
                     TRADE_CONFIG['amount'] * TRADE_CONFIG['leverage'],
-                    params={'tag': 'f1ee03b510d5SUDE', 'posSide' :posSide}
+                    params={'tag': 'f1ee03b510d5SUDE', 'posSide' :posSide, 'attachAlgoOrds': [{
+                        'tpTriggerPx': str(tp) , 
+                        'tpOrdPx': str(tp),
+                        'slTriggerPx': str(sl),
+                        'slOrdPx':str(sl)
+                    }]}
                 )
             elif current_position and current_position['side'] == 'long':
                 print("已有多头持仓，保持现状")
@@ -585,7 +592,12 @@ def execute_trade(signal_data, price_data):
                     TRADE_CONFIG['symbol'],
                     'buy',
                     TRADE_CONFIG['amount'] * TRADE_CONFIG['leverage'],
-                    params={'tag': 'f1ee03b510d5SUDE', 'posSide' :posSide}
+                    params={'tag': 'f1ee03b510d5SUDE', 'posSide' :posSide, 'attachAlgoOrds': [{
+                        'tpTriggerPx': str(tp) , 
+                        'tpOrdPx': str(tp),
+                        'slTriggerPx': str(sl),
+                        'slOrdPx':str(sl)
+                    }]}
                 )
 
         elif signal_data['signal'] == 'SELL':
@@ -604,7 +616,12 @@ def execute_trade(signal_data, price_data):
                     TRADE_CONFIG['symbol'],
                     'sell',
                     TRADE_CONFIG['amount'] * TRADE_CONFIG['leverage'],
-                    params={'tag': 'f1ee03b510d5SUDE', 'posSide' :posSide}
+                    params={'tag': 'f1ee03b510d5SUDE', 'posSide' :posSide, 'attachAlgoOrds': [{
+                        'tpTriggerPx': str(tp) , 
+                        'tpOrdPx': str(tp),
+                        'slTriggerPx': str(sl),
+                        'slOrdPx':str(sl)
+                    }]}
                 )
             elif current_position and current_position['side'] == 'short':
                 print("已有空头持仓，保持现状")
@@ -615,7 +632,12 @@ def execute_trade(signal_data, price_data):
                     TRADE_CONFIG['symbol'],
                     'sell',
                     TRADE_CONFIG['amount'] * TRADE_CONFIG['leverage'],
-                    params={'tag': 'f1ee03b510d5SUDE', 'posSide' :posSide}
+                    params={'tag': 'f1ee03b510d5SUDE', 'posSide' :posSide, 'attachAlgoOrds': [{
+                        'tpTriggerPx': str(tp) , 
+                        'tpOrdPx': str(tp),
+                        'slTriggerPx': str(sl),
+                        'slOrdPx':str(sl)
+                    }]}
                 )
 
         print("订单执行成功")
