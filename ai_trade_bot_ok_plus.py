@@ -717,17 +717,17 @@ def main():
         return
 
     # 根据时间周期设置执行频率
-    # if TRADE_CONFIG['timeframe'] == '1h':
-    #     schedule.every().hour.at(":01").do(trading_bot)
-    #     print("执行频率: 每小时一次")
-    # elif TRADE_CONFIG['timeframe'] == '15m':
-    #     schedule.every(15).minutes.do(trading_bot)
-    #     print("执行频率: 每15分钟一次")
-    # else:
-    #     schedule.every().hour.at(":01").do(trading_bot)
-    #     print("执行频率: 每小时一次")
+    if TRADE_CONFIG['timeframe'] == '1h':
+        schedule.every().hour.at(":01").do(trading_bot)
+        print("执行频率: 每小时一次")
+    elif TRADE_CONFIG['timeframe'] == '15m':
+        schedule.every(15).minutes.do(trading_bot)
+        print("执行频率: 每15分钟一次")
+    else:
+        schedule.every().hour.at(":01").do(trading_bot)
+        print("执行频率: 每小时一次")
 
-    schedule.every(5).minutes.do(trading_bot)
+    # schedule.every(5).minutes.do(trading_bot)
 
     # 立即执行一次
     trading_bot()
