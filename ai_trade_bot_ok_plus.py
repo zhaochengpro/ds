@@ -245,9 +245,9 @@ def get_coins_ohlcv_enhanced():
 
     coins_ohlcv = {}
     
-    for attempt in range(retries):
-        try:
-            for coin in coin_list:
+    for coin in coin_list:
+        for attempt in range(retries):
+            try:
                 # 获取K线数据
                 ohlcv = exchange.fetch_ohlcv(f"{coin}/USDT:USDT", TRADE_CONFIG['timeframe'],
                                             limit=TRADE_CONFIG['data_points'])
@@ -291,12 +291,19 @@ def get_coins_ohlcv_enhanced():
                     'levels_analysis': levels_analysis,
                     'full_data': df
                 }
-        except Exception as e:
-            if attempt == retries - 1:
-                return None
-            logger.error(f"获取增强K线数据失败: {e}")
-            time.sleep(5)
-            continue
+
+                
+                logger.info(f"{coin}当前价格: ${coins_ohlcv[coin]['price']:,.2f}")
+                logger.info(f"数据周期: {TRADE_CONFIG['timeframe']}")
+                logger.info(f"价格变化: {coins_ohlcv[coin]['price_change']:+.2f}%")
+                break
+            except Exception as e:
+                if attempt == retries - 1:
+                    return None
+                logger.error(f"获取增强K线数据失败: {e}")
+                time.sleep(5)
+                continue
+        
     return coins_ohlcv
 
 
@@ -353,14 +360,14 @@ def get_current_position(data_price, retries=10):
         for coin, _ in data_price.items():
             try:
                 positions = exchange.fetch_positions([f"{coin}/USDT:USDT"])
-                # print(f"positions: {positions}")
+                # logger.info(f"positions: {positions}")
                 for pos in positions:
                     if pos['symbol'] == f"{coin}/USDT:USDT":
                         contracts = float(pos['contracts']) if pos['contracts'] else 0
 
                         if contracts > 0:
                             orders = exchange.fetch_open_orders(f"{coin}/USDT:USDT", params={'ordType': 'oco'})
-                            # print(f"orders: {orders}")
+                            # logger.info(f"orders: {orders}")
                             sl = 0
                             tp = 0
                             if len(orders) > 0:
@@ -570,7 +577,7 @@ def analyze_with_deepseek(price_data):
 
         # 安全解析JSON
         result = response.choices[0].message.content
-        print(f"DeepSeek原始回复: {result}")
+        logger.info(f"DeepSeek原始回复: {result}")
 
         # 提取JSON部分
         start_idx = result.find('[')
@@ -604,7 +611,7 @@ def analyze_with_deepseek(price_data):
                 if len(signal_history[item['coin']]) > 30:
                     signal_history[item['coin']].pop(0)
 
-            # print(signal_history)
+            # logger.info(signal_history)
             # 信号统计
             if item['coin'] in signal_history:
                 signal_count = 0
@@ -661,26 +668,25 @@ def execute_trade(signal_data, price_data_obj):
             # 如果只是方向反转，需要高信心才执行
             if new_side != current_side:
                 if signal['confidence'] != 'HIGH':
-                    print(f"🔒 非高信心反转信号，保持现有{current_side}仓")
+                    logger.info(f"🔒 非高信心反转信号，保持现有{current_side}仓")
                     return
 
                 # 检查最近信号历史，避免频繁反转
                 if len(signal_history[coin]) >= 2:
                     last_signals = [s['signal'] for s in signal_history[coin][-2:]]
                     if signal['signal'] in last_signals:
-                        print(f"🔒 近期已出现{signal['signal']}信号，避免频繁反转")
+                        logger.info(f"🔒 近期已出现{signal['signal']}信号，避免频繁反转")
                         return
                     
-        print(f"代币: {coin}")
-        print(f"交易信号: {signal['signal']}")
-        print(f"信心程度: {signal['confidence']}")
-        print(f"理由: {signal['reason']}")
-        print(f"止损: ${signal['stop_loss']:,.2f}")
-        print(f"止盈: ${signal['take_profit']:,.2f}")
-        print(f"杠杆: {leverage}x")
-        print(f"购买币数量: {signal['amount']:,.5f} {coin}")
-        print(f"购买币相应USDT数量: ${signal['usdt_amount']:,.2f}")
-        print(f"当前持仓: {current_position}")
+        logger.info(f"代币: {coin}")
+        logger.info(f"交易信号: {signal['signal']}")
+        logger.info(f"信心程度: {signal['confidence']}")
+        logger.info(f"理由: {signal['reason']}")
+        logger.info(f"止损: ${signal['stop_loss']:,.2f}")
+        logger.info(f"止盈: ${signal['take_profit']:,.2f}")
+        logger.info(f"杠杆: {leverage}x")
+        logger.info(f"购买币数量: {signal['amount']:,.5f} {coin}")
+        logger.info(f"购买币相应USDT数量: ${signal['usdt_amount']:,.2f}")
 
         usdt_amount = float(f"{signal['usdt_amount']:,.5f}")
 
@@ -692,7 +698,7 @@ def execute_trade(signal_data, price_data_obj):
 
         # 风险管理：低信心信号不执行
         if signal['confidence'] == 'LOW':
-            print("⚠️ 低信心信号，跳过执行")
+            logger.info("⚠️ 低信心信号，跳过执行")
             continue
 
         try:
@@ -702,14 +708,28 @@ def execute_trade(signal_data, price_data_obj):
             # required_margin = price_data['price'] * op_amount / leverage
             
             if margin_needed >= usdt_balance:  # 使用不超过80%的余额
-                print(f"⚠️ 保证金不足，跳过交易。需要: {usdt_amount:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
+                logger.info(f"⚠️ 保证金不足，跳过交易。需要: {usdt_amount:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
                 continue
+
+            if current_position:
+                pos_tp = float(current_position.get('tp', 0))
+                pos_sl = float(current_position.get('sl', 0))
+                current_pos_side = current_position['side']
+                algo_amount = float(current_position.get('algoAmount', 0))
+            else:
+                pos_tp = 0
+                pos_sl = 0
+                current_pos_side = None
+                algo_amount = 0
             
             tp = signal['take_profit']
             sl = signal['stop_loss']
-            pos_tp = float(current_position.get('tp', 0))
-            pos_sl = float(current_position.get('sl', 0))
-            pos_side = current_position['side']
+
+            logger.info(f"当前持仓: {current_position}")
+            logger.info(f"当前持仓方向: {current_pos_side}")
+            logger.info(f"当前持仓止盈: {pos_tp:.2f} 新止盈: {tp:.2f}")
+            logger.info(f"当前持仓止损: {pos_sl:.2f} 新止损: {sl:.2f}")
+            logger.info(f"当前持仓倍数: {leverage}x")
 
             # 设置倍数
             if signal['signal'] != 'HOLD':
@@ -717,13 +737,13 @@ def execute_trade(signal_data, price_data_obj):
 
             # 执行交易逻辑   tag 是我的经纪商api（不拿白不拿），不会影响大家返佣，介意可以删除
             if signal['signal'] == 'BUY':
-                if current_position and pos_side == 'short':
-                    print("平空仓并开多仓...")
+                if current_position and current_pos_side == 'short':
+                    logger.info("平空仓并开多仓...")
                     # 平空仓
                     exchange.create_market_order(
                         f"{coin}/USDT:USDT",
                         'buy',
-                        pos_side,
+                        current_pos_side,
                         params={'reduceOnly': True, 'tag': '60bb4a8d3416BCDE', 'posSide' :'short'}
                     )
                     time.sleep(1)
@@ -739,28 +759,28 @@ def execute_trade(signal_data, price_data_obj):
                             'slOrdPx':str(sl)
                         }]}
                     )
-                elif current_position and pos_side == 'long':
+                elif current_position and current_pos_side == 'long':
                     if f"{pos_tp:.2f}" != f"{tp:.2f}" or f"{pos_sl:.2f}" != f"{sl:.2f}":
-                        exchange.edit_order(
-                            current_position.get('algoId'),
-                            f"{coin}/USDT:USDT",
-                            'limit',
-                            'sell',
-                            current_position.get('algoAmount'),
-                            params={
-                                'stopLossPrice':sl,
-                                'newSlOrdPx': sl,
-                                'newTpOrdPx': tp,
-                                'takeProfitPrice': tp
-                            }
-                        )
-                        print("移动止盈止损价格")
-                        print(f"旧止盈：{pos_tp:.2f} 新止盈：{tp:.2f}  旧止损：{pos_sl:.2f} 新止损：{sl:.2f}")
+                        params = {
+                            "instId": f"{coin}/USDT:USDT",
+                            "tdMode": "cross",  # 或 isolated
+                            "side": "sell",     # 例如已有多单，设置卖出止盈止损
+                            "ordType": "oco",
+                            "sz": algo_amount,
+                            "tpTriggerPx": str(tp),
+                            "tpOrdPx": str(tp),
+                            "slTriggerPx": str(sl),
+                            "slOrdPx": str(sl),
+                            "posSide": current_pos_side,  # 绑定方向
+                        }
+                        exchange.private_post_trade_order_algo(params=params)
+                        logger.info("移动止盈止损价格")
+                        logger.info(f"旧止盈：{pos_tp:.2f} 新止盈：{tp:.2f}  旧止损：{pos_sl:.2f} 新止损：{sl:.2f}")
                         
-                    print("已有多头持仓，保持现状")
+                    logger.info("已有多头持仓，保持现状")
                 else:
                     # 无持仓时开多仓
-                    print("开多仓...")
+                    logger.info("开多仓...")
                     exchange.create_market_order(
                         f"{coin}/USDT:USDT",
                         'buy',
@@ -774,13 +794,13 @@ def execute_trade(signal_data, price_data_obj):
                     )
 
             elif signal['signal'] == 'SELL':
-                if current_position and pos_side == 'long':
-                    print("平多仓并开空仓...")
+                if current_position and current_pos_side == 'long':
+                    logger.info("平多仓并开空仓...")
                     # 平多仓
                     exchange.create_market_order(
                         f"{coin}/USDT:USDT",
                         'sell',
-                        pos_side,
+                        current_pos_side,
                         params={'reduceOnly': True, 'tag': 'f1ee03b510d5SUDE', 'posSide' :'long'}
                     )
                     time.sleep(1)
@@ -796,27 +816,27 @@ def execute_trade(signal_data, price_data_obj):
                             'slOrdPx':str(sl)
                         }]}
                     )
-                elif current_position and pos_side == 'short':
+                elif current_position and current_pos_side == 'short':
                     if f"{pos_tp:.2f}" != f"{signal['take_profit']:.2f}" or f"{pos_sl:.2f}" != f"{signal['stop_loss']:.2f}":
-                        exchange.editOrder(
-                            current_position.get('algoId'),
-                            f"{coin}/USDT:USDT",
-                            'limit',
-                            'buy',
-                            current_position.get('algoAmount'),
-                            params={
-                                'stopLossPrice':sl,
-                                'newSlOrdPx': sl,
-                                'newTpOrdPx': tp,
-                                'takeProfitPrice': tp
-                            }
-                        )
-                        print("移动止盈止损价格")
-                        print(f"旧止盈：{pos_tp:.2f} 新止盈：{tp:.2f}  旧止损：{pos_sl:.2f} 新止损：{sl:.2f}")
-                    print("已有空头持仓，保持现状")
+                        params = {
+                            "instId": f"{coin}/USDT:USDT",
+                            "tdMode": "cross",  # 或 isolated
+                            "side": 'buy',     # 例如已有多单，设置卖出止盈止损
+                            "ordType": "oco",
+                            "sz": algo_amount,
+                            "tpTriggerPx": str(tp),
+                            "tpOrdPx": str(tp),
+                            "slTriggerPx": str(sl),
+                            "slOrdPx": str(sl),
+                            "posSide": current_pos_side,  # 绑定方向
+                        }
+                        exchange.private_post_trade_order_algo(params=params)
+                        logger.info("移动止盈止损价格")
+                        logger.info(f"旧止盈：{pos_tp:.2f} 新止盈：{tp:.2f}  旧止损：{pos_sl:.2f} 新止损：{sl:.2f}")
+                    logger.info("已有空头持仓，保持现状")
                 else:
                     # 无持仓时开空仓
-                    print("开空仓...")
+                    logger.info("开空仓...")
                     exchange.create_market_order(
                         f"{coin}/USDT:USDT",
                         'sell',
@@ -829,30 +849,31 @@ def execute_trade(signal_data, price_data_obj):
                         }]}
                     )
             elif signal['signal'] == 'HOLD':
-                # if f"{pos_tp:.2f}" != f"{tp:.2f}" or f"{pos_sl:.2f}" != f"{sl:.2f}":
-                exchange.edit_order(
-                    current_position.get('algoId'),
-                    f"{coin}/USDT:USDT",
-                    'market',
-                    'buy' if pos_side == 'short' else 'sell',
-                    current_position.get('algoAmount'),
-                    params={
-                        'stopLossPrice':1139,
-                        'newSlOrdPx': 1139,
-                        'newTpOrdPx': tp,
-                        'takeProfitPrice': tp
-                    }
-                )
-                print("移动止盈止损价格")
-                print(f"旧止盈：{pos_tp:.2f} 新止盈：{tp:.2f}  旧止损：{pos_sl:.2f} 新止损：{sl:.2f}")
+                if current_position:
+                    if f"{pos_tp:.2f}" != f"{tp:.2f}" or f"{pos_sl:.2f}" != f"{sl:.2f}":
+                        params = {
+                            "instId": f"{coin}/USDT:USDT",
+                            "tdMode": "cross",  # 或 isolated
+                            "side": "sell" if current_pos_side == 'long' else 'buy',     # 例如已有多单，设置卖出止盈止损
+                            "ordType": "oco",
+                            "sz": algo_amount,
+                            "tpTriggerPx": str(tp),
+                            "tpOrdPx": str(tp),
+                            "slTriggerPx": str(sl),
+                            "slOrdPx": str(sl),
+                            "posSide": current_pos_side,  # 绑定方向
+                        }
+                        exchange.private_post_trade_order_algo(params=params)
+                        logger.info("移动止盈止损价格")
+                        logger.info(f"旧止盈：{pos_tp:.2f} 新止盈：{tp:.2f}  旧止损：{pos_sl:.2f} 新止损：{sl:.2f}")
 
-            print("订单执行成功")
+            logger.info("订单执行成功")
             time.sleep(2)
             position = get_current_position(price_data_obj)
-            print(f"更新后持仓: {position}")
+            logger.info(f"更新后持仓: {position}")
 
         except Exception as e:
-            print(f"订单执行失败: {e}")
+            logger.error(f"订单执行失败: {e}")
             import traceback
             traceback.print_exc()
 
@@ -887,10 +908,6 @@ def trading_bot():
     if not price_data:
         return
 
-    # logger.info(f"{COIN}当前价格: ${price_data['price']:,.2f}")
-    # logger.info(f"数据周期: {TRADE_CONFIG['timeframe']}")
-    # logger.info(f"价格变化: {price_data['price_change']:+.2f}%")
-
     # 2. 使用DeepSeek分析（带重试）
     signal_data = analyze_with_deepseek_with_retry(price_data)
 
@@ -915,7 +932,7 @@ def get_fact_amount(symbol, notional, leverage, price):
 
 def main():
     """主函数"""
-    exchange.httpsProxy = 'http://127.0.0.1:1080/'
+    exchange.httpsProxy = os.getenv('https_proxy')
     setup_log()
     logger.info(f"OKX自动交易机器人启动成功！")
     logger.info("融合技术指标策略 + OKX实盘接口")
@@ -925,17 +942,15 @@ def main():
     # 根据时间周期设置执行频率
     if TRADE_CONFIG['timeframe'] == '1h':
         schedule.every().hour.at(":01").do(trading_bot)
-        print("执行频率: 每小时一次")
+        logger.info("执行频率: 每小时一次")
     elif TRADE_CONFIG['timeframe'] == '15m':
         schedule.every(15).minutes.do(trading_bot)
-        print("执行频率: 每15分钟一次")
+        logger.info("执行频率: 每15分钟一次")
     else:
         schedule.every().hour.at(":01").do(trading_bot)
-        print("执行频率: 每小时一次")
+        logger.info("执行频率: 每小时一次")
 
-    print(inspect.signature(exchange.create_trigger_order))
-    exchange.create_stop_limit_order("BNB/USDT:USDT", 'sell', 78, 1125, 1125, {'posSide': 'long'})
-    exchange.create_trigger_order("BNB/USDT:USDT", 'limit', 'sell', 78, 1125, 1125, {'posSide': 'long'})
+
     # schedule.every(5).minutes.do(trading_bot)
     # 立即执行一次
     trading_bot()
