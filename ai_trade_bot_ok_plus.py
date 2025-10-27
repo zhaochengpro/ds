@@ -19,7 +19,7 @@ deepseek_client = OpenAI(
     api_key=os.getenv('OPENROUTER_API_KEY'),
     base_url="https://openrouter.ai/api/v1"
 )
-AI_MODEL = os.getenv('DEEPSEEK_MODEL', 'qwen/qwen3-max')
+AI_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek/deepseek-chat-v3.1')
 # 初始化OKX交易所
 exchange = ccxt.okx({
     'options': {
