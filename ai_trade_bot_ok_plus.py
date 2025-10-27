@@ -389,7 +389,7 @@ def generate_kline_data(price_data):
     kline_data = {}
     for coin, data_item in price_data.items():
         kline_text = f"【{coin}最近24小时96根15分钟K线数据】\n"
-        for i, kline in enumerate(data_item['kline_data'][-30:]):
+        for i, kline in enumerate(data_item['kline_data']):
             trend = "阳线" if kline['close'] > kline['open'] else "阴线"
             change = ((kline['close'] - kline['open']) / kline['open']) * 100
             kline_text += f"K线{i + 1}: {trend} 开盘:{kline['open']:.2f} 收盘:{kline['close']:.2f} 涨跌:{change:+.2f}% 交易量:{kline['volume']} sma5:{kline['sma_5']} sma20:{kline['sma_20']} sma50:{kline['sma_50']} ema12:{kline['ema_12']} ema26:{kline['ema_26']} macd:{kline['macd']} rsi:{kline['rsi']} 20期布林线中线，上线，下线分别为:{kline['bb_middle']}, {kline['bb_upper']}, {kline['bb_lower']}\n"
