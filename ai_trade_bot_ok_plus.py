@@ -713,6 +713,9 @@ def execute_trade(signal_data, price_data_obj):
     for signal in signal_data:
         coin = signal['coin']
         coin_logger = get_coin_logger(coin)
+        coin_logger.info(f"=" * 60)
+        coin_logger.info(f"=" * 60)
+        coin_logger.info(f"代币：{coin}")
         price_data = price_data_obj[coin]
         current_position = pos_obj.get(coin)
         posSide = 'long' if signal['signal'] == 'BUY' else 'short'
@@ -828,9 +831,13 @@ def execute_trade(signal_data, price_data_obj):
                         }]}
                     )
                 elif current_position and current_pos_side == 'long':
-                    if f"{pos_tp:.2f}" != f"{tp:.2f}" or f"{pos_sl:.2f}" != f"{sl:.2f}":
+                    if (tp != 0 and f"{pos_tp:.2f}" != f"{tp:.2f}") or (sl != 0 and f"{pos_sl:.2f}" != f"{sl:.2f}"):
+                        exchange.private_post_trade_cancel_algos([{
+                            "instId": f"{coin}-USDT-SWAP",
+                            "algoId": current_position['algoId']
+                        }])
                         params = {
-                            "instId": f"{coin}/USDT:USDT",
+                            "instId": f"{coin}-USDT-SWAP",
                             "tdMode": "cross",
                             "side": "sell",
                             "ordType": "oco",
@@ -883,9 +890,13 @@ def execute_trade(signal_data, price_data_obj):
                         }]}
                     )
                 elif current_position and current_pos_side == 'short':
-                    if f"{pos_tp:.2f}" != f"{signal['take_profit']:.2f}" or f"{pos_sl:.2f}" != f"{signal['stop_loss']:.2f}":
+                    if (tp != 0 and f"{pos_tp:.2f}" != f"{tp:.2f}") or (sl != 0 and f"{pos_sl:.2f}" != f"{sl:.2f}"):
+                        exchange.private_post_trade_cancel_algos([{
+                            "instId": f"{coin}-USDT-SWAP",
+                            "algoId": current_position['algoId']
+                        }])
                         params = {
-                            "instId": f"{coin}/USDT:USDT",
+                            "instId": f"{coin}-USDT-SWAP",
                             "tdMode": "cross",
                             "side": 'buy',
                             "ordType": "oco",
@@ -916,9 +927,16 @@ def execute_trade(signal_data, price_data_obj):
                     )
             elif signal['signal'] == 'HOLD':
                 if current_position:
-                    if f"{pos_tp:.2f}" != f"{tp:.2f}" or f"{pos_sl:.2f}" != f"{sl:.2f}":
+                    if (tp != 0 and f"{pos_tp:.2f}" != f"{tp:.2f}") or (sl != 0 and f"{pos_sl:.2f}" != f"{sl:.2f}"):
+                        exchange.private_post_trade_cancel_algos([{
+                            "instId": f"{coin}-USDT-SWAP",
+                            "algoId": current_position['algoId']
+                        }])
+                        coin_logger.info(
+                            f"取消历史止盈止损"
+                        )
                         params = {
-                            "instId": f"{coin}/USDT:USDT",
+                            "instId": f"{coin}-USDT-SWAP",
                             "tdMode": "cross",
                             "side": "sell" if current_pos_side == 'long' else 'buy',
                             "ordType": "oco",
@@ -938,7 +956,8 @@ def execute_trade(signal_data, price_data_obj):
             time.sleep(2)
             position = get_current_position(price_data_obj)
             coin_logger.info(f"最新持仓 | {summarize_positions(position)}")
-
+            coin_logger.info(f"=" * 60)
+            coin_logger.info(f"=" * 60)
         except Exception as e:
             coin_logger.exception(f"订单执行失败: {e}")
             import traceback
@@ -1015,10 +1034,11 @@ def main():
 
     for coin in coin_list:
         coin_logger = get_coin_logger(coin)
-        coin_logger.info("OKX自动交易机器人启动成功！")
-        coin_logger.info("融合技术指标策略 + OKX实盘接口")
+        coin_logger.info("=" * 60)
+        coin_logger.info(f"代币：{coin}")
         coin_logger.info(f"交易周期: {TRADE_CONFIG['timeframe']}")
         coin_logger.info("已启用完整技术指标分析和持仓跟踪功能")
+        coin_logger.info("=" * 60)
 
     # 根据时间周期设置执行频率
     frequency_msg = "每小时一次"
@@ -1035,6 +1055,28 @@ def main():
     logger.info(f"执行频率: {frequency_msg}")
     for coin in coin_list:
         get_coin_logger(coin).info(f"执行频率: {frequency_msg}")
+
+    # params = {
+    #     "instId": "BTC-USDT-SWAP",  # ✅ 正确
+    #     "tdMode": "cross",
+    #     "side": "buy",              # 空单平仓用 buy
+    #     "ordType": "oco",
+    #     "sz": "0.01",
+    #     "tpTriggerPx": "200000",
+    #     "tpOrdPx": "200000",
+    #     "slTriggerPx": "67000",
+    #     "slOrdPx": "67000",
+    #     "posSide": "short",
+    # }
+    # resp = exchange.private_post_trade_order_algo(params)
+    # open_algos = exchange.private_get_trade_orders_algo_pending({
+    #     "ordType": "oco",   # 双向止盈止损
+    #     "instId": "XRP-USDT-SWAP"  # 对应合约
+    # })
+    # print(open_algos)
+
+
+    # print('done')
 
 
     # schedule.every(5).minutes.do(trading_bot)
