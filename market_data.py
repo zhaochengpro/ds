@@ -1,18 +1,41 @@
 """Market data utilities converted from demo.go.
 
 This module mirrors the original Go implementation while using ccxt to
-collect Binance futures kline data and related derivatives.
+collect OKX swap kline data and related derivatives.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Callable, List, Optional, TypeVar
 
 import ccxt
+import os
+import time
+
+T = TypeVar("T")
 
 
+def _call_with_retries(
+    func: Callable[..., T],
+    *args: Any,
+    retries: int = 3,
+    delay: float = 2.0,
+    backoff: float = 1.5,
+    default: Optional[T] = None,
+    **kwargs: Any,
+) -> Optional[T]:
+    current_delay = delay
+    for attempt in range(retries):
+        try:
+            return func(*args, **kwargs)
+        except Exception:
+            if attempt == retries - 1:
+                return default
+            time.sleep(current_delay)
+            current_delay *= backoff
+    return default
 @dataclass
 class OIData:
     latest: float
@@ -66,16 +89,17 @@ class Kline:
     close_time: int
 
 
-_exchange: Optional[ccxt.binance] = None
+_exchange: Optional[ccxt.okx] = None
 
 
-def get_exchange() -> ccxt.binance:
+def get_exchange() -> ccxt.okx:
     global _exchange
     if _exchange is None:
-        exchange = ccxt.binance({
+        exchange = ccxt.okx({
             "enableRateLimit": True,
-            "options": {"defaultType": "future"},
+            "options": {"defaultType": "swap", "defaultSettle": "usdt"},
         })
+        exchange.httpsProxy = os.getenv('https_proxy')
         try:
             exchange.load_markets()
         except Exception:
@@ -102,7 +126,13 @@ def to_ccxt_symbol(symbol: str) -> str:
 def get_klines(symbol: str, interval: str, limit: int) -> List[Kline]:
     exchange = get_exchange()
     ccxt_symbol = to_ccxt_symbol(symbol)
-    ohlcvs = exchange.fetch_ohlcv(ccxt_symbol, timeframe=interval, limit=limit)
+    ohlcvs = _call_with_retries(
+        exchange.fetch_ohlcv,
+        ccxt_symbol,
+        timeframe=interval,
+        limit=limit,
+        default=[],
+    ) or []
     klines: List[Kline] = []
     for open_time, open_, high, low, close, volume in ohlcvs:
         klines.append(
@@ -240,50 +270,35 @@ def calculate_longer_term_data(klines: List[Kline]) -> LongerTermData:
     return data
 
 
-def call_exchange_method(exchange: ccxt.binance, names: List[str], params: dict) -> Optional[dict]:
-    for name in names:
-        method = getattr(exchange, name, None)
-        if method is None:
-            continue
-        response = method(params)
-        if isinstance(response, list):
-            if response:
-                return response[0]
-        elif isinstance(response, dict):
-            return response
-    return None
-
-
 def get_open_interest(symbol: str) -> Optional[OIData]:
     exchange = get_exchange()
-    binance_symbol = normalize_symbol(symbol)
-    response = call_exchange_method(
-        exchange,
-        [
-            "fapiPublic_get_openinterest",
-            "fapiPublicGetOpenInterest",
-            "public_get_futures_data",
-        ],
-        {"symbol": binance_symbol},
-    )
-    if not response or "openInterest" not in response:
+    ccxt_symbol = to_ccxt_symbol(symbol)
+    interest = _call_with_retries(exchange.fetch_open_interest, ccxt_symbol)
+    if not interest:
         return None
 
-    latest = float(response["openInterest"])
-    return OIData(latest=latest, average=latest * 0.999)
+    latest = interest.get("openInterestAmount")
+    if latest is None:
+        latest = interest.get("openInterestValue")
+    if latest is None:
+        return None
+
+    latest_value = float(latest)
+    average_value = interest.get("openInterestValue")
+    average = float(average_value) if average_value is not None else latest_value
+    return OIData(latest=latest_value, average=average)
 
 
 def get_funding_rate(symbol: str) -> float:
     exchange = get_exchange()
-    binance_symbol = normalize_symbol(symbol)
-    response = call_exchange_method(
-        exchange,
-        ["fapiPublic_get_premiumindex", "fapiPublicGetPremiumIndex"],
-        {"symbol": binance_symbol},
-    )
-    if response and "lastFundingRate" in response:
-        return float(response["lastFundingRate"])
-    return 0.0
+    ccxt_symbol = to_ccxt_symbol(symbol)
+    funding = _call_with_retries(exchange.fetch_funding_rate, ccxt_symbol)
+    if not funding:
+        return 0.0
+    rate = funding.get("fundingRate")
+    if rate is None:
+        return 0.0
+    return float(rate)
 
 
 def get_market_data(symbol: str) -> Data:
@@ -332,76 +347,71 @@ def get_market_data(symbol: str) -> Data:
 
 def format_market_data(data: Data) -> str:
     lines: List[str] = []
+    lines.append(f"\n")
+    lines.append(f"    ### 所有{data.symbol[:-4]}数据\n")
     lines.append(
-        (
-            f"current_price = {data.current_price:.2f}, current_ema20 = {data.current_ema20:.3f}, "
-            f"current_macd = {data.current_macd:.3f}, current_rsi (7 period) = {data.current_rsi7:.3f}\n"
-        )
+        f"    **当前快照：**\n"
+        f"    - 当前价格 = {data.current_price:.2f}\n"
+        f"    - 当前_EMA20 = {data.current_ema20:.3f}\n"
+        f"    - 当前_macd = {data.current_macd:.3f}\n"
+        f"    - 当前_rsi（7周期） = {data.current_rsi7:.3f}\n"
     )
-
-    lines.append(
-        f"In addition, here is the latest {data.symbol} open interest and funding rate for perps:\n"
-    )
-
     if data.open_interest:
         lines.append(
-            (
-                f"Open Interest: Latest: {data.open_interest.latest:.2f} "
-                f"Average: {data.open_interest.average:.2f}\n"
-            )
+            f"    **永续合约指标：**\n"
+            f"    - 未平仓合约：最新值：{data.open_interest.latest:.2f} | 平均值：{data.open_interest.average:.2f}\n"
+            f"    - 资金费率：{data.funding_rate:.2e}\n"
         )
-
-    lines.append(f"Funding Rate: {data.funding_rate:.2e}\n")
 
     if data.intraday_series:
         series = data.intraday_series
-        lines.append("Intraday series (3-minute intervals, oldest → latest):\n")
+        lines.append("    **日内系列（3分钟间隔，最旧→最新）：**\n")
 
         if series.mid_prices:
-            lines.append(f"Mid prices: {format_float_slice(series.mid_prices)}\n")
+            lines.append(f"    中价：{format_float_slice(series.mid_prices)}\n")
         if series.ema20_values:
             lines.append(
-                f"EMA indicators (20-period): {format_float_slice(series.ema20_values)}\n"
+                f"    EMA指标（20周期）：{format_float_slice(series.ema20_values)}\n"
             )
         if series.macd_values:
-            lines.append(f"MACD indicators: {format_float_slice(series.macd_values)}\n")
+            lines.append(f"    MACD指标：{format_float_slice(series.macd_values)}\n")
         if series.rsi7_values:
             lines.append(
-                f"RSI indicators (7-Period): {format_float_slice(series.rsi7_values)}\n"
+                f"    RSI指标（7周期）：{format_float_slice(series.rsi7_values)}\n"
             )
         if series.rsi14_values:
             lines.append(
-                f"RSI indicators (14-Period): {format_float_slice(series.rsi14_values)}\n"
+                f"    RSI指标（14周期）：{format_float_slice(series.rsi14_values)}\n"
             )
 
     if data.longer_term_context:
         lt = data.longer_term_context
-        lines.append("Longer-term context (4-hour timeframe):\n")
+        lines.append("    **长期背景（4小时周期）：**\n")
 
         lines.append(
             (
-                f"20-Period EMA: {lt.ema20:.3f} vs. 50-Period EMA: {lt.ema50:.3f}\n"
+                f"    20周期EMA: {lt.ema20:.3f} vs. 50周期EMA: {lt.ema50:.3f}\n"
             )
         )
         lines.append(
             (
-                f"3-Period ATR: {lt.atr3:.3f} vs. 14-Period ATR: {lt.atr14:.3f}\n"
+                f"    3周期ATR: {lt.atr3:.3f} vs. 14周期ATR: {lt.atr14:.3f}\n"
             )
         )
         lines.append(
             (
-                f"Current Volume: {lt.current_volume:.3f} vs. Average Volume: {lt.average_volume:.3f}\n"
+                f"    当前成交量: {lt.current_volume:.3f} vs. 平均成交量: {lt.average_volume:.3f}\n"
             )
         )
 
         if lt.macd_values:
-            lines.append(f"MACD indicators: {format_float_slice(lt.macd_values)}\n")
+            lines.append(f"    MACD指标（4h）：{format_float_slice(lt.macd_values)}\n")
         if lt.rsi14_values:
             lines.append(
-                f"RSI indicators (14-Period): {format_float_slice(lt.rsi14_values)}\n"
+                f"    RSI指标（14周期, 4h）：{format_float_slice(lt.rsi14_values)}\n"
             )
 
-    return "\n".join(lines)
+    return "\n".join(lines) + '\n    ---'
 
 
 def format_float_slice(values: List[float]) -> str:
@@ -418,4 +428,3 @@ __all__ = [
     "get_market_data",
     "format_market_data",
 ]
-
