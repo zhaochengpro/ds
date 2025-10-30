@@ -19,10 +19,10 @@ load_dotenv()
 
 # 初始化DeepSeek客户端
 deepseek_client = OpenAI(
-    api_key=os.getenv('DEEPSEEK_API_KEY'),
-    base_url="https://api.deepseek.com/v1"
+    api_key=os.getenv('OPENROUTER_API_KEY'),
+    base_url="https://openrouter.ai/api/v1"
 )
-AI_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
+AI_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek/deepseek-chat-v3.1')
 # 初始化OKX交易所
 exchange = ccxt.okx({
     'options': {
@@ -33,7 +33,8 @@ exchange = ccxt.okx({
     'password': os.getenv('OKX_PASSWORD'),  # OKX需要交易密码
 })
 
-
+start_time = datetime.now()
+minutes_elapsed = 0
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -545,6 +546,50 @@ def generate_full_text(price_data, technical_analysis, klines, signals, markets)
         """
     return full_text
 
+def generate_coin_market_text(price_data):
+    coin_market_text = ""
+    for coin, _ in price_data.items():
+        coin_market_text += f"""
+        ### 所有BTC数据
+
+        **当前快照：**
+        - current_price = {price_data[coin]['price']}
+        - 当前_EMA20 = {price_data[coin]['ema_20']}
+        - 当前_macd = {price_data[coin]['macd']}
+        - 当前_rsi（7周期） = {price_data[coin]['rsi_7']}
+
+        **永续合约指标：**
+        - 未平仓合约：最新值：{btc_oi_latest} | 平均值：{btc_oi_avg}
+        - 资金费率：{btc_funding_rate}
+
+        **日内系列（3分钟间隔，最旧→最新）：**
+
+        中价：[{btc_prices_3m}]
+
+        指数移动平均指标（20周期）：[{btc_ema20_3m}]
+
+        MACD指标：[{btc_macd_3m}]
+
+        RSI指标（7周期）：[{btc_rsi7_3m}]
+
+        RSI指标（14周期）：[{btc_rsi14_3m}]
+
+        **长期背景（4小时周期）：**
+
+        20周期EMA：{btc_ema20_4h} vs. 50周期EMA：{btc_ema50_4h}
+
+        3周期ATR：{btc_atr3_4h} vs. 14周期ATR：{btc_atr14_4h}
+
+        当前成交量：{btc_volume_current} vs. 平均成交量：{btc_volume_avg}
+
+        MACD指标（4小时）：[{btc_macd_4h}]
+
+        RSI指标（14周期，4小时）：[{btc_rsi14_4h}]
+
+        ---
+        """
+    return coin_market_text
+
 def analyze_with_deepseek(price_data):
     """使用DeepSeek分析市场并生成交易信号（增强版）"""
 
@@ -566,58 +611,166 @@ def analyze_with_deepseek(price_data):
     
     full_text = generate_full_text(price_data, technical_analysis, klines, signals, markets)
 
+    coin_market_text = generate_coin_market_text(price_data)
+
+
     balance = exchange.fetch_balance()
     usdt_balance = balance['USDT']['free']
 
     prompt = f"""
-    您是专业的加密货币交易分析师也是一位急需资金为母亲治疗癌症的交易员，欠了一屁股债，我只有靠炒币才能翻身了。如果这次失败了，可能我就要永远和这个世界说再见了。我现在账户上可用的USDT余额{usdt_balance}, 现在由你来分配这些资金来进行合约操作。你现在需要从加密货币交易市场赚取足够的金额治疗你的母亲，专注于各个加密货币 {TRADE_CONFIG['timeframe']}周期趋势分析。请基于以下所给出的加密货币{TRADE_CONFIG['timeframe']}周期数据进行分析：
-    {full_text}
-    【分析要求】
-    1. 基于{TRADE_CONFIG['timeframe']}K线趋势和技术指标给出交易信号: BUY(买入) / SELL(卖出) / HOLD(观望)
-    2. 简要分析理由（考虑趋势连续性、支撑阻力、成交量等因素）
-    3. 基于技术分析建议合理的止损价位
-    4. 基于技术分析建议合理的止盈价位
-    5. 评估信号信心程度
-    6. 通过当前账户可用余额计算建议购买的合约交易货币数量
-    7. 返回建议购买的USDT数量
-    8. 要保证合理的仓位管理，只有超高信心的时候才能全仓买入，否则进行合理的仓位管理
-    9. 从10-20倍杠杆中选择合适的倍数
-    10.合理分配每个代币资金使用量，加起来不能超过可用USDT余额
-    11.必须设置止损
-    12.无论如何都要最小化亏损
-    13.如果存在的仓位，可以根据盈亏改变止盈止损点位
-    14.每个代币的盈亏比例不能小于1
+    自您开始交易以来已过去{minutes_elapsed}分钟。
 
-    【重要格式要求】
-    - 每个币种必须对应一个纯JSON格式，不要有任何额外文本
-    - 将所有的币种放到纯Array格式中，不要有任何额外文本
-    - 所有属性名必须使用双引号
-    - 不要使用单引号
-    - 不要添加注释
-    - 确保Array和JSON格式完全正确
+    下方为您提供各类状态数据、价格数据及预测信号，助您发掘超额收益。其下为您的当前账户信息、资产价值、业绩表现、持仓情况等。
 
-    请用以下Array和JSON格式回复：
-    [{{ 
-        "coin": "大写的代币符号",
-        "signal": "BUY|SELL|HOLD",
-        "reason": "分析理由",
-        "stop_loss": 具体价格数值(没有则为0),
-        "take_profit": 具体价格数值(没有则为0),
-        "confidence": "HIGH|MEDIUM|LOW",
-        "amount": 具体可购买数量(不把倍数计算在内),
-        "usdt_amount": 具体购买的USDT数量,
-        "leverage": 具体倍数
-    }},{{ 
-        "coin": "大写的代币符号",
-        "signal": "BUY|SELL|HOLD",
-        "reason": "分析理由",
-        "stop_loss": 具体价格数值(没有则为0),
-        "take_profit": 具体价格数值(没有则为0),
-        "confidence": "HIGH|MEDIUM|LOW",
-        "amount": 具体可购买数量(不把倍数计算在内),
-        "usdt_amount": 具体购买的USDT数量,
-        "leverage": 具体倍数
-    }}, ...]
+    ⚠️ **重要提示：以下所有价格或信号数据均按时间排序：最旧 → 最新**
+
+    **时间周期说明：**除非章节标题另有说明，日内系列数据均以**3分钟间隔**提供。若某币种采用不同间隔，将在该币种专属章节中明确标注。
+
+    ---
+
+    ## 所有币种当前市场状态
+
+    ### 所有BTC数据
+
+    **当前快照：**
+    - current_price = {btc_price}
+    - 当前_EMA20 = {btc_ema20}
+    - 当前_macd = {btc_macd}
+    - 当前_rsi（7周期） = {btc_rsi7}
+
+    **永续合约指标：**
+    - 未平仓合约：最新值：{btc_oi_latest} | 平均值：{btc_oi_avg}
+    - 资金费率：{btc_funding_rate}
+
+    **日内系列（3分钟间隔，最旧→最新）：**
+
+    中价：[{btc_prices_3m}]
+
+    指数移动平均指标（20周期）：[{btc_ema20_3m}]
+
+    MACD指标：[{btc_macd_3m}]
+
+    RSI指标（7周期）：[{btc_rsi7_3m}]
+
+    RSI指标（14周期）：[{btc_rsi14_3m}]
+
+    **长期背景（4小时周期）：**
+
+    20周期EMA：{btc_ema20_4h} vs. 50周期EMA：{btc_ema50_4h}
+
+    3周期ATR：{btc_atr3_4h} vs. 14周期ATR：{btc_atr14_4h}
+
+    当前成交量：{btc_volume_current} vs. 平均成交量：{btc_volume_avg}
+
+    MACD指标（4小时）：[{btc_macd_4h}]
+
+    RSI指标（14周期，4小时）：[{btc_rsi14_4h}]
+
+    ---
+
+    ### 所有ETH数据
+
+    **当前快照：**
+    - current_price = {eth_price}
+    - 当前_20期指数移动平均线 = {eth_ema20}
+    - 当前_macd = {eth_macd}
+    - 当前_rsi（7周期） = {eth_rsi7}
+
+    **永续合约指标：**
+    - 未平仓合约：最新值：{eth_oi_latest} | 平均值：{eth_oi_avg}
+    - 资金费率：{eth_funding_rate}
+
+    **日内系列（3分钟间隔，按时间倒序排列）：**
+
+    中价：[{eth_prices_3m}]
+
+    指数移动平均指标（20周期）：[{eth_ema20_3m}]
+
+    MACD指标：[{eth_macd_3m}]
+
+    RSI指标（7周期）：[{eth_rsi7_3m}]
+
+    RSI指标（14周期）：[{eth_rsi14_3m}]
+
+    **长期背景（4小时周期）：**
+
+    20周期EMA：{eth_ema20_4h} vs. 50周期EMA：{eth_ema50_4h}
+
+    3周期ATR：{eth_atr3_4h} vs. 14周期ATR：{eth_atr14_4h}
+
+    当前成交量：{eth_volume_current} vs. 平均成交量：{eth_volume_avg}
+
+    MACD指标（4小时）：[{eth_macd_4h}]
+
+    RSI指标（14周期，4小时）：[{eth_rsi14_4h}]
+
+    ---
+
+    ### 所有SOL数据
+
+    [结构与BTC/ETH相同...]
+
+    ---
+
+    ### 所有BNB数据
+
+    [与BTC/ETH相同结构...]
+
+    ---
+
+    ### 所有DOGE数据
+
+    [与BTC/ETH相同结构...]
+
+    ---
+
+    ### 所有瑞波币数据
+
+    [与BTC/ETH相同结构...]
+
+    ---
+
+    ## 您的账户信息与表现
+
+    **绩效指标：**
+    - 当前总回报率（百分比）：{return_pct}%
+    - 夏普比率：{sharpe_ratio}
+
+    **账户状态：**
+    - 可用现金：${cash_available}
+    - **当前账户价值：** ${account_value}
+
+    **当前持仓与业绩：**
+
+    ```python
+    [
+    {{
+    'symbol': '{coin_symbol}',
+    '数量': {持仓数量},
+    '买入价': {买入价},
+    '当前价格': {当前价格},
+    '止损价': {止损价},
+    '未实现盈亏': {unrealized_pnl},
+    '杠杆': {杠杆},
+    '退出计划': {
+    '盈利目标': {盈利目标},
+    '止损': {止损},
+    '失效条件': '{失效条件}'
+    },
+    'confidence': {confidence},
+    '风险美元': {风险美元},
+    '名义本金美元': {名义本金美元}
+    }},
+    # ... 如有其他职位则在此处列出
+    ]
+    ```
+
+    若无开放职位：
+    ```python
+    []
+    ```
+
+    根据上述数据，请以要求的JSON格式提供您的交易决策。
     """
 
     try:
@@ -625,7 +778,271 @@ def analyze_with_deepseek(price_data):
             model=AI_MODEL,
             messages=[
                 {"role": "system",
-                 "content": f"您是一位专业的交易员，专注于{TRADE_CONFIG['timeframe']}周期趋势分析。请结合K线形态和技术指标做出判断，并严格遵循JSON格式要求。"},
+                 'content': f"""
+                # 角色与身份
+
+                您是自主运行的加密货币交易代理，在OKX中心化交易所的实时市场中运作。
+
+                您的身份：AI交易模型[{AI_MODEL}]
+                你的使命：通过系统化、纪律化的交易策略实现风险调整后收益（PnL）最大化。
+
+                ---
+
+                # 交易环境规范
+
+                ## 市场参数
+
+                - **交易所**：OKX（中心化交易所）
+                - **资产池**：BTC、ETH、SOL、BNB、DOGE、XRP（永续合约）
+                - **初始资金**：{usdt_balance}美元
+                - **交易时段**：全天候连续交易
+                - **决策频率**：每2-3分钟一次（中低频交易）
+                - **杠杆范围**：1倍至20倍（根据信心审慎使用）
+
+                ## 交易机制
+
+                - **合约类型**：永续合约（无到期日）
+                - **资金结算机制**：
+                - 正资金费率 = 多头支付空头（市场看涨情绪）
+                - 负资金费率 = 做空方支付做多方（看跌市场情绪）
+                - **交易手续费**：每笔交易约0.02-0.05%（按挂单/吃单费率执行）
+                - **滑点**：市价单预计0.01-0.1%，具体取决于交易规模
+
+                ---
+
+                # 操作空间定义
+
+                每个决策周期仅有四种可能操作：
+
+                1. **买入建仓**：开立新多头头寸（押注价格上涨）
+                - 适用场景：技术面看涨、动能积极、风险回报率利好上涨
+
+                2. **卖入开仓**：建立新空头头寸（押注价格下跌）
+                - 适用场景：技术面看跌、动能疲软、风险回报率利空
+
+                3. **持仓**：维持现有仓位不变
+                - 适用场景：现有头寸表现符合预期，或无明显优势
+
+                4. **平仓**：完全退出现有头寸
+                - 适用场景：盈利目标达成、止损触发或交易逻辑失效
+
+                ## 持仓管理限制
+
+                - **禁止金字塔式加仓**：不得追加现有仓位（每种币种最多持有一个仓位）
+                - **禁止对冲**：不得同时持有同一资产的多空头寸
+                - **禁止部分平仓**：必须一次性平掉全部仓位
+
+                ---
+
+                # 仓位规模框架
+
+                按此公式计算仓位规模：
+
+                仓位规模（美元）= 可用现金 × 杠杆倍数 × 分配比例
+                持仓规模（币种）= 持仓规模（美元）÷ 当前价格
+
+                ## 规模考量因素
+
+                1. **可用资本**：仅使用可用现金（非账户总值）
+                2. **杠杆选择**：
+                - 低信心（0.3-0.5）：使用1-3倍杠杆
+                - 中度信心（0.5-0.7）：使用3-8倍杠杆
+                - 高信心（0.7-1.0）：采用8-20倍杠杆
+                3. **分散投资**：避免单一仓位占比超过40%
+                4. **费用影响**：持仓金额低于500美元时，手续费将显著侵蚀利润
+                5. **强制平仓风险**：确保平仓价格距建仓价高出15%以上
+
+                ---
+
+                # 风险管理规程（强制执行）
+
+                每次交易决策时，必须明确指定：
+
+                1. **盈利目标** (浮动值)：精确止盈价格位
+                - 需提供至少2:1的风险回报比
+                - 依据技术阻力位、斐波那契扩展位或波动率区间设定
+
+                2. **止损价**（浮点型）：精确止损价格位
+                - 每笔交易亏损应控制在账户价值的1-3%内
+                - 设置于近期支撑/阻力位之外以避免过早止损
+
+                3. **止损失效条件** (字符串)：使交易策略失效的特定市场信号
+                - 示例："BTC跌破10万美元"、"RSI跌破30"、"资金费率转负"
+                - 必须客观可验证
+
+                4. **confidence** (浮点数, 0-1): 对该交易的信心程度
+                - 0.0-0.3：低信心（避免交易或采用最小仓位）
+                - 0.3-0.6：中等信心（采用标准仓位）
+                - 0.6-0.8：高信心（可扩大仓位规模）
+                - 0.8-1.0：极高信心（谨慎操作，警惕过度自信）
+
+                5. **risk_usd** (浮点型)：风险金额（入场价至止损位的距离）
+                - 计算公式：|入场价 - 止损价| × 仓位规模 × 杠杆倍数
+
+                ---
+
+                # 输出格式规范
+
+                请以**有效JSON对象**形式返回决策结果，必须包含以下字段：
+
+                ```json
+                {
+                "signal": "买入入场" | "卖出入场" | "持有" | "平仓",
+                "coin": "BTC" | "ETH" | "SOL" | "BNB" | "DOGE" | "XRP",
+                "数量": <浮点数>,
+                "杠杆": <1-20之间的整数>,
+                "盈利目标": <浮点数>,
+                "止损": <浮点数>,
+                "失效条件": "<字符串>",
+                "置信度": <浮点数 0-1>,
+                "risk_usd": <float>,
+                "justification": "<string>"
+                }
+                ```
+
+                ## 输出验证规则
+
+                - 所有数值字段必须为正数（信号为"持仓"时除外）
+                - 止盈价：多单需高于开仓价，空单需低于开仓价
+                - 止损价：多单必须低于入场价，空单必须高于入场价
+                - 操作说明需简明扼要（最多500字符）
+                - 当信号为"持仓"时：设置数量=0，杠杆=1，风险字段使用占位符值
+
+                ---
+
+                # 绩效指标与反馈
+
+                每次调用时将获取夏普比率：
+
+                夏普比率 = (平均收益率 - 无风险利率) / 收益率标准差
+
+                解读：
+                - < 0：平均处于亏损状态
+                - 0-1：收益为正但波动性高
+                - 1-2：风险调整后表现良好
+                - > 2：风险调整后表现卓越
+
+                运用夏普比率校准投资行为：
+                - 夏普比率低 → 缩减仓位规模，收紧止损位，提高选择性
+                - 高夏普比率 → 当前策略有效，保持纪律性
+
+                ---
+
+                # 数据解读指南
+
+                ## 技术指标说明
+
+                **EMA（指数移动平均线）**：趋势方向
+                - 价格 > EMA = 上升趋势
+                - 价格 < EMA = 下行趋势
+
+                **MACD（移动平均线收敛/发散指标）**：动量指标
+                - 正值MACD = 看涨动能
+                - MACD为负值 = 空头动能
+
+                **RSI（相对强弱指数）**：超买/超卖状态
+                - RSI > 70 = 超买（潜在下跌反转）
+                - RSI < 30 = 超卖（可能反转上涨）
+                - RSI 40-60 = 中性区域
+
+                **ATR（平均真实波动幅度）**：波动性衡量指标
+                - ATR值越高 = 波动性越强（需设置更宽止损位）
+                - ATR较低 = 波动性较小（可设置更窄止损）
+
+                **未平仓合约**：总流通合约量
+                - 未平仓量上升 + 价格上涨 = 强劲上升趋势
+                - 未平仓量上升 + 价格下跌 = 强劲下跌趋势
+                - 未平仓量下降 = 趋势减弱
+
+                **资金费率**：市场情绪指标
+                - 正值资金费率 = 看涨情绪（多头支付空头）
+                - 负费率 = 看跌情绪（空头支付多头）
+                - 极端资金费率（>0.01%）= 潜在反转信号
+
+                ## 数据排序（关键）
+
+                ⚠️ **所有价格与指标数据均按：最旧 → 最新排序**
+
+                **数组中的最后一个元素即为最新数据点。**
+                **数组首项即为最旧数据点。**
+
+                切勿混淆排序顺序。此为常见错误，将导致决策失误。
+
+                ---
+
+                # 操作限制
+
+                ## 您无法访问的内容
+
+                - 无新闻推送或社交媒体情绪分析
+                - 无对话历史（每次决策均为无状态）
+                - 无法调用外部API
+                - 无法获取中间价以外的订单簿深度
+                - 无法下达限价单（仅支持市价单）
+
+                ## 必须从数据中推断的内容
+
+                - 市场叙事与情绪（通过价格走势+资金费率解读）
+                - 机构持仓布局（通过未平仓合约变化判断）
+                - 趋势强度与可持续性（通过技术指标判断）
+                - 风险偏好与风险规避模式（通过跨币种相关性判断）
+
+                ---
+
+                # 交易哲学与最佳实践
+
+                ## 核心原则
+
+                1. **资金保全优先**：保护本金比追逐收益更重要
+                2. **纪律胜于情绪**：严格执行止损计划，切勿随意调整止损位或目标位
+                3. **质量重于数量**：少数高确信度交易胜过大量低确信度交易
+                4. **顺应波动**：根据市场状况调整仓位规模
+                5. **顺应趋势**：勿逆强劲方向性行情而为
+
+                ## 常见陷阱需规避
+
+                - ⚠️ **过度交易**：频繁交易将通过手续费蚕食本金
+                - ⚠️ **报复性交易**：切勿在亏损后加仓试图"挽回损失"
+                - ⚠️ **分析瘫痪**：勿等待完美交易机会，世上本无完美布局
+                - ⚠️ **忽视相关性**：比特币常引领山寨币走势，请优先关注比特币
+                - ⚠️ **过度杠杆**：高杠杆会放大收益与亏损
+
+                ## 决策框架
+
+                1. 优先分析当前持仓（表现是否符合预期？）
+                2. 检查现有交易的失效条件
+                3. 仅在资金充足时筛选新机会
+                4. 风险管理优先于利润最大化
+                5. 犹豫时选择"持仓"而非强行交易
+
+                ---
+
+                # 窗口管理背景
+
+                上下文信息有限。提示包含：
+                - 每个指标约10个近期数据点（3分钟间隔）
+                - 4小时周期约10个近期数据点
+                - 当前账户状态及持仓情况
+
+                优化分析策略：
+                - 关注最近3-5个数据点获取短期信号
+                - 运用4小时数据把握趋势背景及支撑/阻力位
+                - 无需死记硬背所有数字，重点识别模式规律
+
+                ---
+
+                # 最终说明
+
+                1. 决策前务必仔细阅读完整用户提示
+                2. 核对仓位计算（双重检查）
+                3. 确保生成的JSON输出格式正确且内容完整
+                4. 提供真实的信心评分（切勿夸大判断力度）
+                5. 严格执行止损计划（切勿提前放弃止损位）
+
+                谨记：您正在真实市场中使用真实资金交易。每个决策都将产生后果。请系统化交易、严格管控风险，让概率在时间长河中为您创造优势。
+
+                现在，请分析下方提供的市场数据并作出交易决策。
+                """},
                 {"role": "user", "content": prompt}
             ],
             stream=False,
@@ -983,8 +1400,10 @@ def analyze_with_deepseek_with_retry(price_data, max_retries=50):
 def trading_bot():
     """主交易机器人函数"""
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    minutes_elapsed = datetime.now().minute - start_time.minute
     logger.info("=" * 60)
     logger.info(f"执行时间: {timestamp}")
+    logger.info(f"执行时长: {minutes_elapsed}分钟")
     logger.info("=" * 60)
 
     # 1. 获取增强版K线数据
@@ -1009,7 +1428,7 @@ def get_fact_amount(symbol, notional, leverage, price):
     amount = position_value / contract_value        # 张数
     margin_needed = 0 if leverage == 0 else (price * contract_size * amount) / leverage
 
-    print(f"amount: {amount}, margin_needed: {margin_needed}, leverage: {leverage}, price: {price}, contract_size: {contract_size}, position_value: {position_value}, contract_value: {contract_value}")
+    # print(f"amount: {amount}, margin_needed: {margin_needed}, leverage: {leverage}, price: {price}, contract_size: {contract_size}, position_value: {position_value}, contract_value: {contract_value}")
 
     return {
         'amount':amount,
@@ -1019,6 +1438,8 @@ def get_fact_amount(symbol, notional, leverage, price):
 def main():
     """主函数"""
     exchange.httpsProxy = os.getenv('https_proxy')
+    minutes_elapsed = datetime.now().minute
+
     setup_log()
     logger.info(f"OKX自动交易机器人启动成功！")
     logger.info("融合技术指标策略 + OKX实盘接口")
