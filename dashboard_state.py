@@ -83,12 +83,17 @@ def _build_equity_timeframes(history: List[Dict[str, Any]]) -> Dict[str, List[Di
         )
 
     if not prepared:
-        return {"week": [], "month": [], "year": []}
+        return {"day": [], "week": [], "month": [], "year": []}
 
     prepared.sort(key=lambda item: item["datetime"])
     now = datetime.now(timezone.utc)
 
     return {
+        "day": _sample_history(
+            prepared,
+            cutoff=now - timedelta(days=1),
+            min_interval=timedelta(minutes=15),
+        ),
         "week": _sample_history(
             prepared,
             cutoff=now - timedelta(days=7),

@@ -1,7 +1,14 @@
 const API_ENDPOINT = '/api/state';
+const ACCOUNT_ENDPOINT = '/api/account';
 const REFRESH_INTERVAL_MS = 5000;
-const EQUITY_RANGES = ['week', 'month', 'year'];
+const ACCOUNT_REFRESH_INTERVAL_MS = 2000;
+const EQUITY_RANGES = ['day', 'week', 'month', 'year'];
 const EQUITY_COLORS = {
+  day: {
+    line: 'rgba(167, 130, 255, 0.9)',
+    fill: 'rgba(167, 130, 255, 0.22)',
+    solid: '#a782ff',
+  },
   week: {
     line: 'rgba(40, 199, 111, 0.9)',
     fill: 'rgba(40, 199, 111, 0.18)',
@@ -30,13 +37,16 @@ const numberFormatter = new Intl.NumberFormat('zh-CN', {
 });
 
 let previousState = null;
+let previousAccountSnapshot = null;
 let equitySeries = {
+  day: [],
   week: [],
   month: [],
   year: [],
 };
-let currentEquityRange = 'week';
+let currentEquityRange = 'day';
 let equityChart = null;
+let latestDataTimestamp = null;
 
 function toNumber(value) {
   const parsed = Number(value);
@@ -79,6 +89,53 @@ function formatTimestamp(value) {
   return date.toLocaleString('zh-CN', {
     hour12: false,
   });
+}
+
+function toDate(value) {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date;
+}
+
+function updateLastUpdatedDisplay(date) {
+  if (!date) {
+    return;
+  }
+  const updatedEl = document.getElementById('last-updated');
+  if (updatedEl) {
+    updatedEl.textContent = formatTimestamp(date.toISOString());
+  }
+}
+
+function resetLastUpdatedFromSources(timestamps) {
+  if (!Array.isArray(timestamps) || timestamps.length === 0) {
+    return;
+  }
+  const latest = timestamps
+    .map(toDate)
+    .filter(Boolean)
+    .sort((a, b) => b.getTime() - a.getTime())[0];
+  if (!latest) {
+    return;
+  }
+  latestDataTimestamp = latest;
+  updateLastUpdatedDisplay(latest);
+}
+
+function applyLastUpdated(timestamp) {
+  const parsed = toDate(timestamp);
+  if (!parsed) {
+    return;
+  }
+  if (!latestDataTimestamp || parsed.getTime() > latestDataTimestamp.getTime()) {
+    latestDataTimestamp = parsed;
+    updateLastUpdatedDisplay(parsed);
+  }
 }
 
 function triggerFlash(element, delta) {
@@ -132,9 +189,12 @@ function formatChartLabel(timestamp, range) {
   }
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  if (range === 'day') {
+    return `${hours}:${minutes}`;
+  }
   if (range === 'week') {
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
     return `${month}/${day} ${hours}:${minutes}`;
   }
   if (range === 'month') {
@@ -290,7 +350,7 @@ function updateEquitySeries(series) {
   });
 
   if (!EQUITY_RANGES.includes(currentEquityRange)) {
-    currentEquityRange = 'week';
+    currentEquityRange = 'day';
   }
 
   applyRangeTheme(currentEquityRange);
@@ -342,6 +402,17 @@ function updateAccountCard(account, prevAccount = {}) {
   flashNumericChange(sharpeEl, account?.sharpe_ratio, prevAccount?.sharpe_ratio);
 }
 
+function handleAccountUpdate(account = {}) {
+  const safeAccount = account && typeof account === 'object' ? { ...account } : {};
+  const prevAccount = previousAccountSnapshot || {};
+  updateAccountCard(safeAccount, prevAccount);
+  previousAccountSnapshot = { ...safeAccount };
+  if (previousState && typeof previousState === 'object') {
+    previousState.account = { ...previousAccountSnapshot };
+  }
+  applyLastUpdated(safeAccount.timestamp);
+}
+
 function updatePositionsTable(positions, prevPositions = {}) {
   const tbody = document.getElementById('positions-body');
   if (!tbody) {
@@ -375,7 +446,7 @@ function updatePositionsTable(positions, prevPositions = {}) {
     }
 
     const columns = [
-      { label: '合约', key: 'symbol', display: item.symbol || '--', numeric: false },
+      { label: '合约', key: 'symbol', display: item.symbol || '--', className: 'cell-symbol' },
       { label: '数量', key: 'quantity', display: formatNumber(item.quantity), numeric: true },
       { label: '入场价', key: 'entry_price', display: formatNumber(item.entry_price, 2), numeric: true },
       { label: '当前价', key: 'current_price', display: formatNumber(item.current_price, 2), numeric: true },
@@ -385,6 +456,7 @@ function updatePositionsTable(positions, prevPositions = {}) {
         display: formatCurrency(item.unrealized_pnl),
         numeric: true,
         positiveNegative: true,
+        className: 'cell-pnl',
       },
       {
         label: '杠杆',
@@ -399,6 +471,14 @@ function updatePositionsTable(positions, prevPositions = {}) {
       const td = document.createElement('td');
       td.dataset.label = column.label;
       td.textContent = column.display;
+
+      if (column.numeric) {
+        td.classList.add('cell-numeric');
+      }
+
+      if (column.className) {
+        td.classList.add(column.className);
+      }
 
       if (column.positiveNegative) {
         const numericValue = toNumber(item[column.key]);
@@ -585,11 +665,10 @@ function renderState(state) {
   const account = state?.account || {};
   const positions = state?.positions || {};
   const strategy = state?.strategy || {};
-  const prevAccount = previousState?.account || {};
   const prevPositions = previousState?.positions || {};
   const prevStrategy = previousState?.strategy || {};
 
-  updateAccountCard(account, prevAccount);
+  handleAccountUpdate(account);
   updatePositionsTable(positions, prevPositions);
   updateStrategySignals(strategy, prevStrategy);
   updateStrategyBatches(strategy.batches, prevStrategy?.batches || []);
@@ -600,16 +679,12 @@ function renderState(state) {
     const latestBatch = strategy.batches[strategy.batches.length - 1];
     timestamps.push(latestBatch.timestamp);
   }
-  const latestTimestamp = timestamps
-    .filter(Boolean)
-    .sort((a, b) => new Date(b) - new Date(a))[0];
-
-  const updatedEl = document.getElementById('last-updated');
-  if (updatedEl) {
-    updatedEl.textContent = formatTimestamp(latestTimestamp);
-  }
+  resetLastUpdatedFromSources(timestamps);
 
   previousState = cloneState(state) || state;
+  if (previousState && typeof previousState === 'object') {
+    previousState.account = { ...(previousAccountSnapshot || account) };
+  }
 }
 
 async function fetchState() {
@@ -628,6 +703,19 @@ async function fetchState() {
   }
 }
 
+async function fetchAccount() {
+  try {
+    const response = await fetch(ACCOUNT_ENDPOINT, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error(`请求失败：${response.status}`);
+    }
+    const account = await response.json();
+    handleAccountUpdate(account);
+  } catch (error) {
+    console.error('获取账户数据失败', error);
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.range-button').forEach((button) => {
     button.addEventListener('click', () => {
@@ -639,5 +727,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   setActiveRange(currentEquityRange);
   fetchState();
+  fetchAccount();
   setInterval(fetchState, REFRESH_INTERVAL_MS);
+  setInterval(fetchAccount, ACCOUNT_REFRESH_INTERVAL_MS);
 });
