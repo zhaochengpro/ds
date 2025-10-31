@@ -22,80 +22,141 @@
     </header>
 
     <main class="app-main">
-      <section class="card" id="account-summary">
-        <h2>账户概览</h2>
-        <div class="metric-grid">
-          <div class="metric metric-account">
-            <span class="metric-label">账户价值</span>
-            <span class="metric-value" id="account-value">--</span>
-          </div>
-          <div class="metric metric-cash">
-            <span class="metric-label">可用现金</span>
-            <span class="metric-value" id="account-cash">--</span>
-          </div>
-          <div class="metric metric-return">
-            <span class="metric-label">累积收益率</span>
-            <span class="metric-value" id="account-return">--</span>
-          </div>
-          <div class="metric metric-sharpe">
-            <span class="metric-label">夏普比率</span>
-            <span class="metric-value" id="account-sharpe">--</span>
-          </div>
+      <section class="metrics-strip" id="account-summary">
+        <div class="metric metric-account">
+          <span class="metric-label">账户价值</span>
+          <span class="metric-value" id="account-value">--</span>
+          <span class="metric-sub">实时估值</span>
+        </div>
+        <div class="metric metric-cash">
+          <span class="metric-label">可用现金</span>
+          <span class="metric-value" id="account-cash">--</span>
+          <span class="metric-sub">资金可用度</span>
+        </div>
+        <div class="metric metric-return">
+          <span class="metric-label">累积收益率</span>
+          <span class="metric-value" id="account-return">--</span>
+          <span class="metric-sub">自启动以来</span>
+        </div>
+        <div class="metric metric-sharpe">
+          <span class="metric-label">夏普比率</span>
+          <span class="metric-value" id="account-sharpe">--</span>
+          <span class="metric-sub">风险回报</span>
         </div>
       </section>
 
-      <section class="card" id="equity-section">
-        <div class="card-header">
-          <h2>资金走势</h2>
-          <div class="range-toggle" role="tablist">
-            <button type="button" class="range-button is-active" data-range="day">最近24小时</button>
-            <button type="button" class="range-button" data-range="week">最近一周</button>
-            <button type="button" class="range-button" data-range="month">最近一月</button>
-            <button type="button" class="range-button" data-range="year">最近一年</button>
+      <section class="primary-grid">
+        <section class="card panel-equity" id="equity-section">
+          <div class="card-header">
+            <div>
+              <h2>资金走势</h2>
+              <p class="card-sub">实时权益曲线</p>
+            </div>
+            <div class="range-toggle" role="tablist">
+              <button type="button" class="range-button is-active" data-range="day">最近24小时</button>
+              <button type="button" class="range-button" data-range="week">最近一周</button>
+              <button type="button" class="range-button" data-range="month">最近一月</button>
+              <button type="button" class="range-button" data-range="year">最近一年</button>
+            </div>
           </div>
-        </div>
-        <div class="chart-container">
-          <canvas id="equity-chart"></canvas>
-          <div id="equity-empty" class="chart-empty">暂无资金数据</div>
-        </div>
+          <div class="chart-container">
+            <canvas id="equity-chart"></canvas>
+            <div id="equity-empty" class="chart-empty">暂无资金数据</div>
+          </div>
+        </section>
+
+        <section class="card panel-strategy" id="strategy-section">
+          <div class="strategy-header">
+            <div>
+              <h2>AI 策略</h2>
+              <p class="card-sub" id="strategy-name">智能量化监控</p>
+            </div>
+            <span class="strategy-status" id="strategy-status">待机</span>
+          </div>
+          <div class="strategy-overview" id="strategy-overview">
+            <div class="strategy-symbol-line">
+              <span class="strategy-symbol" id="strategy-symbol">--</span>
+              <span class="strategy-action-badge" id="strategy-action">--</span>
+            </div>
+            <div class="strategy-confidence">
+              <span class="strategy-confidence-label">置信度</span>
+              <div class="strategy-confidence-bar">
+                <div class="strategy-confidence-fill" id="strategy-confidence-bar"></div>
+              </div>
+              <span class="strategy-confidence-value" id="strategy-confidence-value">--</span>
+            </div>
+            <dl class="strategy-meta">
+              <div>
+                <dt>杠杆</dt>
+                <dd id="strategy-leverage">--</dd>
+              </div>
+              <div>
+                <dt>仓位规模 (USD)</dt>
+                <dd id="strategy-size">--</dd>
+              </div>
+              <div>
+                <dt>最新信号时间</dt>
+                <dd id="strategy-updated">--</dd>
+              </div>
+              <div>
+                <dt>信号描述</dt>
+                <dd id="strategy-note">--</dd>
+              </div>
+            </dl>
+            <button class="strategy-action-button" type="button" disabled>调整策略参数</button>
+          </div>
+          <div class="strategy-list-wrapper">
+            <div class="strategy-list-header">
+              <h3>最新信号</h3>
+            </div>
+            <div id="strategy-signals" class="strategy-list">
+              <p class="empty">暂无信号数据</p>
+            </div>
+          </div>
+        </section>
       </section>
 
-      <section class="card" id="positions-section">
-        <h2>当前持仓</h2>
-        <div class="table-container">
-          <table id="positions-table">
-            <thead>
-              <tr>
-                <th>合约</th>
-                <th>数量</th>
-                <th>入场价</th>
-                <th>当前价</th>
-                <th>未实现盈亏</th>
-                <th>杠杆</th>
-                <th>风险 (USD)</th>
-              </tr>
-            </thead>
-            <tbody id="positions-body">
-              <tr>
-                <td class="empty" data-label="状态" colspan="7">暂无持仓数据</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <section class="secondary-grid">
+        <section class="card panel-positions" id="positions-section">
+          <div class="card-header">
+            <div>
+              <h2>当前持仓</h2>
+              <p class="card-sub">实时持仓与风险</p>
+            </div>
+          </div>
+          <div class="table-container">
+            <table id="positions-table">
+              <thead>
+                <tr>
+                  <th>合约</th>
+                  <th>数量</th>
+                  <th>入场价</th>
+                  <th>当前价</th>
+                  <th>未实现盈亏</th>
+                  <th>杠杆</th>
+                  <th>风险 (USD)</th>
+                </tr>
+              </thead>
+              <tbody id="positions-body">
+                <tr>
+                  <td class="empty" data-label="状态" colspan="7">暂无持仓数据</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-      <section class="card" id="strategy-section">
-        <h2>AI 策略信号</h2>
-        <div id="strategy-signals" class="strategy-list">
-          <p class="empty">暂无信号数据</p>
-        </div>
-      </section>
-
-      <section class="card" id="batch-section">
-        <h2>最近策略批次</h2>
-        <div id="batch-list" class="batch-list">
-          <p class="empty">尚未记录交易批次</p>
-        </div>
+        <section class="card panel-batches" id="batch-section">
+          <div class="card-header">
+            <div>
+              <h2>最近策略批次</h2>
+              <p class="card-sub">最新执行记录</p>
+            </div>
+          </div>
+          <div id="batch-list" class="batch-list">
+            <p class="empty">尚未记录交易批次</p>
+          </div>
+        </section>
       </section>
     </main>
 

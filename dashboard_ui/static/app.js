@@ -26,6 +26,12 @@ const EQUITY_COLORS = {
   },
 };
 
+const CONFIDENCE_KEYWORDS = {
+  HIGH: 82,
+  MEDIUM: 55,
+  LOW: 28,
+};
+
 const currencyFormatter = new Intl.NumberFormat('zh-CN', {
   style: 'currency',
   currency: 'USD',
@@ -38,6 +44,7 @@ const numberFormatter = new Intl.NumberFormat('zh-CN', {
 
 let previousState = null;
 let previousAccountSnapshot = null;
+let previousStrategySummary = null;
 let equitySeries = {
   day: [],
   week: [],
@@ -55,6 +62,13 @@ function toNumber(value) {
 
 function normalizeSymbol(symbol) {
   return (symbol || '').toUpperCase();
+}
+
+function normalizeAction(action) {
+  if (!action && action !== 0) {
+    return '';
+  }
+  return String(action).trim().toUpperCase();
 }
 
 function formatCurrency(value) {
@@ -136,6 +150,17 @@ function applyLastUpdated(timestamp) {
     latestDataTimestamp = parsed;
     updateLastUpdatedDisplay(parsed);
   }
+}
+
+function truncateText(value, maxLength = 80) {
+  if (!value) {
+    return '--';
+  }
+  const text = String(value).trim();
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength - 1)}…`;
 }
 
 function triggerFlash(element, delta) {
@@ -501,6 +526,50 @@ function updatePositionsTable(positions, prevPositions = {}) {
   });
 }
 
+function extractConfidencePercent(signal) {
+  if (!signal) {
+    return null;
+  }
+  const clamp = (value) => {
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    return Math.min(Math.max(value, 0), 100);
+  };
+
+  const rawValue = signal.confidence_score ?? signal.confidence;
+
+  if (typeof rawValue === 'number') {
+    const numeric = rawValue > 1 ? rawValue : rawValue * 100;
+    return clamp(numeric);
+  }
+
+  if (typeof rawValue === 'string') {
+    const trimmed = rawValue.trim();
+    const keyword = CONFIDENCE_KEYWORDS[trimmed.toUpperCase()];
+    if (keyword !== undefined) {
+      return keyword;
+    }
+    const match = trimmed.match(/-?\d+(?:\.\d+)?/);
+    if (match) {
+      const parsed = Number(match[0]);
+      if (trimmed.includes('%') || parsed > 1) {
+        return clamp(parsed);
+      }
+      return clamp(parsed * 100);
+    }
+  }
+
+  if (typeof signal.confidence === 'string') {
+    const keyword = CONFIDENCE_KEYWORDS[signal.confidence.toUpperCase()];
+    if (keyword !== undefined) {
+      return keyword;
+    }
+  }
+
+  return null;
+}
+
 function resolveConfidence(signal) {
   if (!signal) {
     return '--';
@@ -514,6 +583,196 @@ function resolveConfidence(signal) {
     return '--';
   }
   return `${(num * 100).toFixed(0)}%`;
+}
+
+function setStrategyActionBadge(element, action) {
+  if (!element) {
+    return;
+  }
+  const classes = ['is-buy', 'is-sell', 'is-short', 'is-hold'];
+  element.classList.remove(...classes);
+  const normalized = normalizeAction(action);
+  if (!normalized) {
+    element.textContent = '--';
+    return;
+  }
+  element.textContent = normalized;
+  if (normalized === 'BUY' || normalized === 'LONG') {
+    element.classList.add('is-buy');
+  } else if (normalized === 'SELL') {
+    element.classList.add('is-sell');
+  } else if (normalized === 'SHORT') {
+    element.classList.add('is-short');
+  } else if (normalized === 'HOLD' || normalized === 'NEUTRAL') {
+    element.classList.add('is-hold');
+  }
+}
+
+function getStrategyNotional(signal) {
+  if (!signal || typeof signal !== 'object') {
+    return null;
+  }
+  const candidates = [
+    signal.usdt_amount,
+    signal.position_size,
+    signal.notional,
+    signal.size_usd,
+    signal.notional_value,
+  ];
+  for (const value of candidates) {
+    const numeric = toNumber(value);
+    if (numeric !== null) {
+      return numeric;
+    }
+  }
+  return null;
+}
+
+function getLatestStrategySignal(strategy) {
+  if (!strategy || typeof strategy !== 'object') {
+    return null;
+  }
+  const signals = strategy.signals || {};
+  let latest = null;
+
+  Object.entries(signals).forEach(([coin, records]) => {
+    if (!Array.isArray(records) || records.length === 0) {
+      return;
+    }
+    const candidate = records[records.length - 1];
+    const timestamp = candidate.timestamp || candidate.created_at || candidate.time;
+    const parsed = toDate(timestamp);
+    if (!parsed) {
+      return;
+    }
+    if (!latest || parsed.getTime() > latest.timestampMs) {
+      latest = {
+        record: {
+          ...candidate,
+          coin: candidate.coin || candidate.symbol || coin,
+          timestamp,
+        },
+        timestampMs: parsed.getTime(),
+      };
+    }
+  });
+
+  return latest ? latest.record : null;
+}
+
+function updateStrategyOverview(strategy) {
+  const prevSummary = previousStrategySummary || {};
+  const symbolEl = document.getElementById('strategy-symbol');
+  const actionEl = document.getElementById('strategy-action');
+  const confidenceValueEl = document.getElementById('strategy-confidence-value');
+  const confidenceBarEl = document.getElementById('strategy-confidence-bar');
+  const statusEl = document.getElementById('strategy-status');
+  const nameEl = document.getElementById('strategy-name');
+  const leverageEl = document.getElementById('strategy-leverage');
+  const sizeEl = document.getElementById('strategy-size');
+  const updatedEl = document.getElementById('strategy-updated');
+  const noteEl = document.getElementById('strategy-note');
+
+  if (!symbolEl || !actionEl || !confidenceValueEl || !confidenceBarEl || !statusEl) {
+    return;
+  }
+
+  const latest = getLatestStrategySignal(strategy);
+  const defaultName = '智能量化监控';
+
+  if (!latest) {
+    symbolEl.textContent = '--';
+    setStrategyActionBadge(actionEl, '');
+    confidenceValueEl.textContent = '--';
+    confidenceBarEl.style.width = '0%';
+    if (statusEl) {
+      statusEl.textContent = '待机';
+      statusEl.classList.remove('is-online');
+    }
+    if (nameEl) {
+      nameEl.textContent = defaultName;
+    }
+    if (leverageEl) {
+      leverageEl.textContent = '--';
+    }
+    if (sizeEl) {
+      sizeEl.textContent = '--';
+    }
+    if (updatedEl) {
+      updatedEl.textContent = '--';
+    }
+    if (noteEl) {
+      noteEl.textContent = '--';
+    }
+    previousStrategySummary = null;
+    return;
+  }
+
+  const normalizedCoin = normalizeSymbol(latest.coin || latest.symbol);
+  symbolEl.textContent = normalizedCoin || '--';
+
+  const action = latest.action || latest.signal || latest.decision;
+  setStrategyActionBadge(actionEl, action);
+
+  const confidencePercent = extractConfidencePercent(latest);
+  confidenceBarEl.style.width = confidencePercent !== null ? `${confidencePercent}%` : '0%';
+  confidenceValueEl.textContent = resolveConfidence(latest);
+  if (confidencePercent !== null) {
+    flashNumericChange(
+      confidenceValueEl,
+      confidencePercent,
+      prevSummary.confidencePercent ?? undefined,
+    );
+  }
+
+  if (statusEl) {
+    statusEl.classList.remove('is-online');
+    statusEl.textContent = '运行中';
+    statusEl.classList.add('is-online');
+  }
+
+  if (nameEl) {
+    nameEl.textContent = latest.strategy_name || latest.strategy || defaultName;
+  }
+
+  if (leverageEl) {
+    const leverageValue = toNumber(latest.leverage);
+    leverageEl.textContent = leverageValue !== null ? `${formatNumber(leverageValue, 2)}x` : '--';
+    flashNumericChange(
+      leverageEl,
+      leverageValue ?? undefined,
+      prevSummary.leverage ?? undefined,
+    );
+  }
+
+  if (sizeEl) {
+    const sizeValue = getStrategyNotional(latest);
+    sizeEl.textContent = sizeValue !== null ? formatCurrency(sizeValue) : '--';
+    flashNumericChange(
+      sizeEl,
+      sizeValue ?? undefined,
+      prevSummary.size ?? undefined,
+    );
+  }
+
+  if (updatedEl) {
+    updatedEl.textContent = latest.timestamp ? formatTimestamp(latest.timestamp) : '--';
+  }
+
+  if (noteEl) {
+    const noteValue = latest.reason || latest.note || latest.summary || latest.comment;
+    noteEl.textContent = noteValue ? truncateText(noteValue, 90) : '--';
+  }
+
+  applyLastUpdated(latest.timestamp);
+
+  previousStrategySummary = {
+    action: normalizeAction(action),
+    confidencePercent,
+    leverage: toNumber(latest.leverage),
+    size: getStrategyNotional(latest),
+    timestamp: latest.timestamp,
+  };
 }
 
 function updateStrategySignals(strategy, prevStrategy = {}) {
@@ -670,6 +929,7 @@ function renderState(state) {
 
   handleAccountUpdate(account);
   updatePositionsTable(positions, prevPositions);
+  updateStrategyOverview(strategy);
   updateStrategySignals(strategy, prevStrategy);
   updateStrategyBatches(strategy.batches, prevStrategy?.batches || []);
   updateEquitySeries(state?.equity);
