@@ -1,9 +1,11 @@
 import os
 import time
+import threading
 import schedule
 from openai import OpenAI
 import ccxt
 import pandas as pd
+import uvicorn
 from datetime import datetime, UTC
 import json
 import re
@@ -19,6 +21,13 @@ from account_utils import (
     get_current_positions,
     build_position_payload,
 )
+from dashboard_state import (
+    record_strategy_batch,
+    record_strategy_signal,
+    update_account_snapshot,
+    update_positions_snapshot,
+)
+from dashboard_server import dashboard_app
 
 
 load_dotenv()
@@ -171,10 +180,16 @@ def analyze_with_deepseek(price_data):
     position_prompt = format_position(positions_snapshot)
     positions_payload = build_position_payload(positions_snapshot, signal_history)
     positions_payload_json = json.dumps(positions_payload, ensure_ascii=False, indent=4)
-    
+
     balance = exchange.fetch_balance()
     account_value, available_cash, return_pct, sharpe_ratio = compute_account_metrics(balance)
     usdt_balance = available_cash
+
+    try:
+        update_account_snapshot(account_value, available_cash, return_pct, sharpe_ratio)
+        update_positions_snapshot(positions_payload)
+    except Exception as state_error:
+        logger.debug(f"Dashboard state update failed | account sync | {state_error}")
 
     prompt = f"""
     自您开始交易以来已过去{minutes_elapsed}分钟。
@@ -250,17 +265,24 @@ def analyze_with_deepseek(price_data):
 
                 每个决策周期仅有四种可能操作：
 
-                1. **买入建仓**：开立新多头头寸（押注价格上涨）
+                1. **开多单**：开立新多头头寸（押注价格上涨）
                 - 适用场景：技术面看涨、动能积极、风险回报率利好上涨
 
-                2. **卖入开仓**：建立新空头头寸（押注价格下跌）
+                2. **开空单**：建立新空头头寸（押注价格下跌）
                 - 适用场景：技术面看跌、动能疲软、风险回报率利空
 
                 3. **持仓**：维持现有仓位不变
                 - 适用场景：现有头寸表现符合预期，或无明显优势
 
-                4. **平仓**：完全退出现有头寸
+                4. **关闭多单**：完全退出现有多仓头寸
                 - 适用场景：盈利目标达成、止损触发或交易逻辑失效
+
+                5. **关闭空单**：完全退出现有空仓头寸
+                - 适用场景：盈利目标达成、止损触发或交易逻辑失效
+
+                6. **等待**：不做任何操作，等待机会
+                - 适用场景：信心不足时，不做任何操作，等到高信息机会
+
 
                 ## 持仓管理限制
 
@@ -342,7 +364,7 @@ def analyze_with_deepseek(price_data):
                 - 止盈价：多单需高于开仓价，空单需低于开仓价
                 - 止损价：多单必须低于入场价，空单必须高于入场价
                 - 操作说明需简明扼要（最多500字符）
-                - 当信号为"持仓"时：设置数量=0，杠杆=1，风险字段使用占位符值
+                - 当信号为"持仓"或者"等待"时：设置数量=0，杠杆=1，风险字段使用占位符值
 
                 ---
 
@@ -585,6 +607,11 @@ def analyze_with_deepseek(price_data):
                 if len(set(last_three)) == 1:
                     coin_logger.warning(f"连续重复信号 | 最近3次均为{signal['signal']}")
 
+        try:
+            record_strategy_batch(signal_data)
+        except Exception as state_error:
+            logger.debug(f"Dashboard state update failed | strategy batch | {state_error}")
+
         return signal_data
 
     except Exception as e:
@@ -639,7 +666,15 @@ def create_fallback_signal(price_data):
             }
         )
         fallback_signals[-1]["confidence"] = "LOW"
+
+    try:
+        for signal in fallback_signals:
+            record_strategy_signal(str(signal.get("coin", "")).upper(), signal)
+    except Exception as state_error:
+        logger.debug(f"Dashboard state update failed | fallback strategy | {state_error}")
+
     return fallback_signals
+
 def get_usdt_balance():
     # 获取账户余额
     balance = exchange.fetch_balance()
@@ -860,6 +895,11 @@ def execute_trade(signal_data, price_data_obj):
             time.sleep(2)
             position = get_current_positions(exchange, logger, price_data_obj.keys())
             coin_logger.info(f"最新持仓 | {summarize_positions(position)}")
+            try:
+                latest_positions = build_position_payload(position, signal_history)
+                update_positions_snapshot(latest_positions)
+            except Exception as state_error:
+                logger.debug(f"Dashboard state update failed | post-trade positions | {state_error}")
         except Exception as e:
             coin_logger.exception(f"订单执行失败: {e}")
             import traceback
@@ -924,6 +964,17 @@ def trading_bot():
 
 
 
+def run_trading_loop(stop_event: threading.Event) -> None:
+    schedule.clear('trading-loop')
+    schedule.every(3).minutes.do(trading_bot).tag('trading-loop')
+
+    trading_bot()
+
+    while not stop_event.is_set():
+        schedule.run_pending()
+        time.sleep(1)
+
+
 def get_fact_amount(symbol, notional, leverage, price):
     mark = exchange.load_markets()
     contract_size = mark[symbol]['contractSize']
@@ -959,15 +1010,33 @@ def main():
         coin_logger.info("已启用完整技术指标分析和持仓跟踪功能")
         coin_logger.info("=" * 60)
 
-    schedule.every(3).minutes.do(trading_bot)
+    stop_event = threading.Event()
+    trading_thread = threading.Thread(
+        target=run_trading_loop,
+        args=(stop_event,),
+        name="trading-loop",
+        daemon=True,
+    )
+    trading_thread.start()
 
-    # 立即执行一次
-    trading_bot()
+    host = os.getenv('DASHBOARD_HOST', '0.0.0.0') or '0.0.0.0'
+    port_value = os.getenv('DASHBOARD_PORT', '8000') or '8000'
+    try:
+        port = int(port_value)
+    except (TypeError, ValueError):
+        port = 8000
 
-    # 循环执行
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+    display_host = host if host not in ('0.0.0.0', '::') else '127.0.0.1'
+    logger.info(f"仪表盘服务 | http://{display_host}:{port}")
+
+    try:
+        uvicorn.run(dashboard_app, host=host, port=port, log_level='info')
+    except KeyboardInterrupt:
+        logger.info("收到停止信号，正在关闭...")
+    finally:
+        stop_event.set()
+        trading_thread.join(timeout=10)
+        logger.info("交易调度器已停止")
 
 
 if __name__ == "__main__":

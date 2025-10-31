@@ -59,3 +59,25 @@
 ### npm install pm2 -g 使用npm安装pm2
 
 ### conda create -n trail3 python=4.10
+
+## 实时监控看板
+
+### 启动后端与前端
+
+1. 确保 `.env` 中已配置 OKX 和 OpenAI/OpenRouter 相关密钥。
+2. （可选）在环境变量中设置需要监控的币种，例如：
+   ```bash
+   export DASHBOARD_SYMBOLS="BTC ETH SOL"
+   ```
+   若省略该变量，后端会基于当前持仓或策略记录自动推断。
+3. 启动 FastAPI 服务：
+   ```bash
+   uvicorn dashboard_backend:app --host 0.0.0.0 --port 8000
+   ```
+4. 浏览器访问 `http://localhost:8000/`，即可查看实时账户收益、持仓和 AI 策略信号。
+
+### API 说明
+
+- `GET /api/overview`：返回账户指标、当前持仓及各币种的策略历史，可通过 `force_refresh=true` 触发从交易所拉取最新数据。
+- `GET /api/account`、`/api/positions`、`/api/strategies`：分别获取单独的数据模块。
+- `GET /api/health`：快速检查后端状态与配置。

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Trader Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="branding">
+        <h1>AI Trader Dashboard</h1>
+        <p>实时监控账户收益、持仓与 AI 策略表现</p>
+      </div>
+      <div class="status">
+        <span class="status-label">连接状态：</span>
+        <span id="connection-status" class="status-indicator status-pending">刷新中</span>
+        <span class="status-separator">|</span>
+        <span>最后更新：</span>
+        <span id="last-updated">--</span>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <section class="card" id="account-summary">
+        <h2>账户概览</h2>
+        <div class="metric-grid">
+          <div class="metric metric-account">
+            <span class="metric-label">账户价值</span>
+            <span class="metric-value" id="account-value">--</span>
+          </div>
+          <div class="metric metric-cash">
+            <span class="metric-label">可用现金</span>
+            <span class="metric-value" id="account-cash">--</span>
+          </div>
+          <div class="metric metric-return">
+            <span class="metric-label">累积收益率</span>
+            <span class="metric-value" id="account-return">--</span>
+          </div>
+          <div class="metric metric-sharpe">
+            <span class="metric-label">夏普比率</span>
+            <span class="metric-value" id="account-sharpe">--</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="equity-section">
+        <div class="card-header">
+          <h2>资金走势</h2>
+          <div class="range-toggle" role="tablist">
+            <button type="button" class="range-button is-active" data-range="week">最近一周</button>
+            <button type="button" class="range-button" data-range="month">最近一月</button>
+            <button type="button" class="range-button" data-range="year">最近一年</button>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="equity-chart"></canvas>
+          <div id="equity-empty" class="chart-empty">暂无资金数据</div>
+        </div>
+      </section>
+
+      <section class="card" id="positions-section">
+        <h2>当前持仓</h2>
+        <div class="table-container">
+          <table id="positions-table">
+            <thead>
+              <tr>
+                <th>合约</th>
+                <th>数量</th>
+                <th>入场价</th>
+                <th>当前价</th>
+                <th>未实现盈亏</th>
+                <th>杠杆</th>
+                <th>风险 (USD)</th>
+              </tr>
+            </thead>
+            <tbody id="positions-body">
+              <tr>
+                <td class="empty" data-label="状态" colspan="7">暂无持仓数据</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" id="strategy-section">
+        <h2>AI 策略信号</h2>
+        <div id="strategy-signals" class="strategy-list">
+          <p class="empty">暂无信号数据</p>
+        </div>
+      </section>
+
+      <section class="card" id="batch-section">
+        <h2>最近策略批次</h2>
+        <div id="batch-list" class="batch-list">
+          <p class="empty">尚未记录交易批次</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <span>启动命令：<code>python ai_trader.py</code></span>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-Y0Wh05rqRXDz6z5G3axhDO4vqIymJ9KXcXxteLoI0lp4rWuHwoMvVJE9idh+Nang" crossorigin="anonymous"></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

@@ -3,3 +3,6 @@
 Library
 venv
 logs
+.vscode
+__pycache__/*
+Users

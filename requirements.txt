@@ -7,3 +7,5 @@ requests
 urllib3
 python-okx
 argparse
+fastapi
+uvicorn
