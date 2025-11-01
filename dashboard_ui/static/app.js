@@ -1,9 +1,7 @@
-const API_ENDPOINT = '/api/state';
-const ACCOUNT_ENDPOINT = '/api/account';
-const EQUITY_ENDPOINT = '/api/analytics/equity';
-const RUNTIME_ENDPOINT = '/api/analytics/runtime';
-const REFRESH_INTERVAL_MS = 5000;
-const ACCOUNT_REFRESH_INTERVAL_MS = 2000;
+const DASHBOARD_STREAM_PATH = '/ws/dashboard';
+const STREAM_RECONNECT_BASE_MS = 1500;
+const STREAM_RECONNECT_MAX_MS = 15000;
+const STREAM_QUEUE_LIMIT = 32;
 const EQUITY_RANGES = ['day', 'week', 'month', 'year'];
 const EQUITY_DEFAULT_RANGE = 'day';
 const EQUITY_COLORS = {
@@ -87,6 +85,11 @@ let equityChartState = {
   yMin: null,
   yMax: null,
 };
+let dashboardSocket = null;
+let streamMessageQueue = [];
+let streamReconnectTimer = null;
+let streamReconnectAttempt = 0;
+let streamReceivedSnapshot = false;
 
 function toNumber(value) {
   const parsed = Number(value);
@@ -432,6 +435,188 @@ function handleEquityPointerLeave() {
     drawEquityChart();
   }
   hideEquityTooltip();
+}
+
+function resolveWebSocketUrl(path) {
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${protocol}://${window.location.host}${normalized}`;
+}
+
+function flushStreamQueue() {
+  if (!dashboardSocket || dashboardSocket.readyState !== WebSocket.OPEN) {
+    return;
+  }
+  while (streamMessageQueue.length > 0) {
+    const message = streamMessageQueue.shift();
+    try {
+      dashboardSocket.send(message);
+    } catch (error) {
+      console.error('发送排队消息失败', error);
+      break;
+    }
+  }
+}
+
+function sendStreamMessage(message) {
+  if (!message || typeof message !== 'object') {
+    return;
+  }
+  let serialized;
+  try {
+    serialized = JSON.stringify(message);
+  } catch (error) {
+    console.error('序列化推送消息失败', error, message);
+    return;
+  }
+  if (dashboardSocket && dashboardSocket.readyState === WebSocket.OPEN) {
+    try {
+      dashboardSocket.send(serialized);
+    } catch (error) {
+      console.error('发送推送消息失败', error);
+    }
+    return;
+  }
+  if (streamMessageQueue.length >= STREAM_QUEUE_LIMIT) {
+    streamMessageQueue.shift();
+  }
+  streamMessageQueue.push(serialized);
+}
+
+function handleEquityStreamPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return;
+  }
+
+  if (payload.timeframes && typeof payload.timeframes === 'object') {
+    Object.entries(payload.timeframes).forEach(([range, points]) => {
+      setEquitySeries(range, Array.isArray(points) ? points : []);
+    });
+  }
+
+  if (Array.isArray(payload.points)) {
+    const targetRange = EQUITY_RANGES.includes(payload.range) ? payload.range : currentEquityRange;
+    setEquitySeries(targetRange, payload.points);
+    if (targetRange === currentEquityRange) {
+      renderEquityChart();
+    }
+  } else if (payload.timeframes && payload.timeframes[currentEquityRange]) {
+    renderEquityChart();
+  }
+
+  if (payload.latest_timestamp) {
+    applyLastUpdated(payload.latest_timestamp);
+  }
+}
+
+function handleDashboardStreamMessage(message) {
+  if (!message || typeof message !== 'object') {
+    return;
+  }
+  const { type } = message;
+  if (!type || typeof type !== 'string') {
+    return;
+  }
+  const normalized = type.toLowerCase();
+
+  if (normalized === 'state') {
+    const payload = message.payload && typeof message.payload === 'object' ? message.payload : {};
+    if (payload.equity && typeof payload.equity === 'object') {
+      Object.entries(payload.equity).forEach(([range, points]) => {
+        setEquitySeries(range, Array.isArray(points) ? points : []);
+      });
+      if (payload.equity[currentEquityRange]) {
+        renderEquityChart();
+      }
+    }
+    renderState(payload);
+    streamReceivedSnapshot = true;
+    setStatus('online');
+    return;
+  }
+
+  switch (normalized) {
+    case 'account':
+      handleAccountUpdate(message.payload || {});
+      break;
+    case 'equity':
+      handleEquityStreamPayload(message);
+      break;
+    case 'runtime':
+      updateRuntimeSummary(message.payload || {});
+      break;
+    case 'heartbeat':
+    case 'pong':
+      break;
+    default:
+      break;
+  }
+}
+
+function scheduleStreamReconnect() {
+  if (streamReconnectTimer) {
+    window.clearTimeout(streamReconnectTimer);
+  }
+  const attempt = streamReconnectAttempt + 1;
+  streamReconnectAttempt = attempt;
+  const delay = Math.min(
+    STREAM_RECONNECT_MAX_MS,
+    STREAM_RECONNECT_BASE_MS * 2 ** (attempt - 1),
+  );
+  streamReconnectTimer = window.setTimeout(() => {
+    streamReconnectTimer = null;
+    connectDashboardStream();
+  }, delay);
+}
+
+function connectDashboardStream() {
+  if (
+    dashboardSocket
+    && (dashboardSocket.readyState === WebSocket.OPEN || dashboardSocket.readyState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
+
+  if (streamReconnectTimer) {
+    window.clearTimeout(streamReconnectTimer);
+    streamReconnectTimer = null;
+  }
+
+  const url = resolveWebSocketUrl(DASHBOARD_STREAM_PATH);
+  const socket = new WebSocket(url);
+  dashboardSocket = socket;
+  streamReceivedSnapshot = false;
+  setStatus('pending');
+
+  socket.addEventListener('open', () => {
+    streamReconnectAttempt = 0;
+    flushStreamQueue();
+    sendStreamMessage({ type: 'request_snapshot' });
+    sendStreamMessage({ type: 'set_equity_range', range: currentEquityRange, include_timeframes: true });
+  });
+
+  socket.addEventListener('message', (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      handleDashboardStreamMessage(data);
+    } catch (error) {
+      console.error('解析推送数据失败', error);
+    }
+  });
+
+  socket.addEventListener('close', () => {
+    if (dashboardSocket === socket) {
+      dashboardSocket = null;
+    }
+    setStatus('offline');
+    streamReceivedSnapshot = false;
+    hideEquityTooltip();
+    scheduleStreamReconnect();
+  });
+
+  socket.addEventListener('error', () => {
+    socket.close();
+  });
 }
 
 function prepareEquityCanvas(chart) {
@@ -799,6 +984,7 @@ function applyRangeTheme(range) {
 
 function setActiveRange(range, options = {}) {
   const normalized = EQUITY_RANGES.includes(range) ? range : EQUITY_DEFAULT_RANGE;
+  const previousRange = currentEquityRange;
   currentEquityRange = normalized;
   document.querySelectorAll('.range-button').forEach((button) => {
     button.classList.toggle('is-active', button.dataset.range === normalized);
@@ -806,9 +992,13 @@ function setActiveRange(range, options = {}) {
   applyRangeTheme(normalized);
   const hasData = Array.isArray(equitySeries[normalized]) && equitySeries[normalized].length > 0;
   renderEquityChart();
-  if (!hasData || options.force) {
-    fetchEquity(normalized, { force: true });
-  }
+  const shouldForce = options.force === true || !hasData;
+  const messageType = normalized !== previousRange ? 'set_equity_range' : 'request_equity';
+  sendStreamMessage({
+    type: messageType,
+    range: normalized,
+    include_timeframes: messageType === 'set_equity_range' || shouldForce,
+  });
 }
 
 function setEquitySeries(range, points) {
@@ -1402,105 +1592,6 @@ function renderState(state) {
   }
 }
 
-async function fetchState() {
-  setStatus('pending');
-  try {
-    const response = await fetch(API_ENDPOINT, { cache: 'no-store' });
-    if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
-    }
-    const data = await response.json();
-    renderState(data);
-    setStatus('online');
-  } catch (error) {
-    console.error('获取仪表盘数据失败', error);
-    setStatus('offline');
-  }
-}
-
-async function fetchAccount() {
-  try {
-    const response = await fetch(ACCOUNT_ENDPOINT, { cache: 'no-store' });
-    if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
-    }
-    const account = await response.json();
-    handleAccountUpdate(account);
-  } catch (error) {
-    console.error('获取账户数据失败', error);
-  }
-}
-
-async function fetchEquity(range = currentEquityRange, options = {}) {
-  const normalized = EQUITY_RANGES.includes(range) ? range : EQUITY_DEFAULT_RANGE;
-  const force = options.force === true;
-  const cached = equitySeries[normalized];
-
-  if (!force && Array.isArray(cached) && cached.length > 0) {
-    if (normalized === currentEquityRange) {
-      renderEquityChart();
-    }
-    return;
-  }
-
-  try {
-    const response = await fetch(`${EQUITY_ENDPOINT}?range=${encodeURIComponent(normalized)}`, {
-      cache: 'no-store',
-    });
-    if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
-    }
-    const payload = await response.json();
-
-    let resolvedRange = normalized;
-    let rawPoints = [];
-    if (Array.isArray(payload)) {
-      rawPoints = payload;
-    } else if (payload && typeof payload === 'object') {
-      if (typeof payload.range === 'string') {
-        const candidate = payload.range.toLowerCase();
-        if (EQUITY_RANGES.includes(candidate)) {
-          resolvedRange = candidate;
-        }
-      }
-      if (Array.isArray(payload.points)) {
-        rawPoints = payload.points;
-      } else if (Array.isArray(payload[resolvedRange])) {
-        rawPoints = payload[resolvedRange];
-      }
-    }
-
-    setEquitySeries(resolvedRange, rawPoints);
-
-    if (resolvedRange === currentEquityRange) {
-      renderEquityChart();
-    }
-
-    const latestPoint = equitySeries[resolvedRange]?.[equitySeries[resolvedRange].length - 1];
-    if (latestPoint?.timestamp) {
-      applyLastUpdated(latestPoint.timestamp);
-    }
-  } catch (error) {
-    console.error('获取资金走势失败', error);
-  }
-}
-
-async function fetchRuntimeSummary() {
-  try {
-    const response = await fetch(RUNTIME_ENDPOINT, { cache: 'no-store' });
-    if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
-    }
-    const summary = await response.json();
-    updateRuntimeSummary(summary);
-  } catch (error) {
-    console.error('获取运行时数据失败', error);
-    if (!previousRuntimeSummary) {
-      updateRuntimeSummary(null);
-    }
-  }
-}
-
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.range-button').forEach((button) => {
     button.addEventListener('click', () => {
@@ -1512,11 +1603,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
   currentEquityRange = EQUITY_DEFAULT_RANGE;
   setActiveRange(EQUITY_DEFAULT_RANGE, { force: true });
-  fetchState();
-  fetchAccount();
-  fetchRuntimeSummary();
-  setInterval(fetchState, REFRESH_INTERVAL_MS);
-  setInterval(fetchAccount, ACCOUNT_REFRESH_INTERVAL_MS);
-  setInterval(() => fetchEquity(currentEquityRange, { force: true }), 30000);
-  setInterval(fetchRuntimeSummary, REFRESH_INTERVAL_MS);
+  connectDashboardStream();
 });

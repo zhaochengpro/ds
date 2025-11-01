@@ -10,3 +10,4 @@ python-okx
 argparse
 fastapi
 uvicorn
+websockets
