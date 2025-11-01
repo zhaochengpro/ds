@@ -67,6 +67,7 @@ class DatabaseClient:
             "password": os.getenv("MYSQL_PASSWORD"),
             "database": os.getenv("MYSQL_DATABASE"),
         }
+        print(self._config)
         self.enabled = all(
             self._config.get(key)
             for key in ("host", "user", "password", "database")
@@ -212,6 +213,7 @@ class DatabaseClient:
                 self._initialized = True
                 LOGGER.info("MySQL persistence initialized successfully.")
             except Exception as exc:  # pragma: no cover - initialization errors
+                print(exc)
                 LOGGER.exception("Failed to initialize MySQL persistence: %s", exc)
                 self.enabled = False
 
