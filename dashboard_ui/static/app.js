@@ -64,6 +64,10 @@ const numberFormatter = new Intl.NumberFormat('zh-CN', {
   maximumFractionDigits: 4,
 });
 
+const integerFormatter = new Intl.NumberFormat('zh-CN', {
+  maximumFractionDigits: 0,
+});
+
 let previousState = null;
 let previousAccountSnapshot = null;
 let previousStrategySummary = null;
@@ -91,6 +95,10 @@ let streamMessageQueue = [];
 let streamReconnectTimer = null;
 let streamReconnectAttempt = 0;
 let streamReceivedSnapshot = false;
+let equityChartAnimation = null;
+let equityChartAnimationFrame = null;
+
+const numberAnimations = new WeakMap();
 
 function toNumber(value) {
   const parsed = Number(value);
@@ -170,6 +178,92 @@ function toDate(value) {
   return date;
 }
 
+function easeOutCubic(t) {
+  const clamped = Math.min(Math.max(t, 0), 1);
+  return 1 - (1 - clamped) ** 3;
+}
+
+function cancelNumberAnimation(element) {
+  const active = numberAnimations.get(element);
+  if (!active) {
+    return;
+  }
+  active.cancelled = true;
+  if (typeof active.frameId === 'number') {
+    cancelAnimationFrame(active.frameId);
+  }
+  numberAnimations.delete(element);
+}
+
+function animateNumericValue(element, value, formatter, options = {}) {
+  if (!element) {
+    return;
+  }
+  const fallback = options.fallback ?? '--';
+  const duration = options.duration ?? 720;
+  const target = toNumber(value);
+
+  if (target === null) {
+    cancelNumberAnimation(element);
+    element.textContent = fallback;
+    element.dataset.numberValue = '';
+    element.classList.remove('number-roll-up', 'number-roll-down');
+    return;
+  }
+
+  const currentStored = toNumber(element.dataset.numberValue);
+  const start = Number.isFinite(currentStored) ? currentStored : target;
+
+  if (!Number.isFinite(start) || Math.abs(start - target) < (options.epsilon ?? 1e-6)) {
+    cancelNumberAnimation(element);
+    element.textContent = formatter ? formatter(target) : String(target);
+    element.dataset.numberValue = String(target);
+    element.classList.remove('number-roll-up', 'number-roll-down');
+    return;
+  }
+
+  cancelNumberAnimation(element);
+
+  const direction = target >= start ? 'number-roll-up' : 'number-roll-down';
+  element.classList.remove('number-roll-up', 'number-roll-down');
+  void element.offsetWidth;
+  element.classList.add(direction);
+
+  const animation = {
+    start,
+    target,
+    startTime: performance.now(),
+    duration,
+    cancelled: false,
+    frameId: null,
+  };
+  numberAnimations.set(element, animation);
+
+  const step = (timestamp) => {
+    if (animation.cancelled) {
+      return;
+    }
+    const elapsed = timestamp - animation.startTime;
+    const progress = Math.min(Math.max(elapsed / animation.duration, 0), 1);
+    const eased = easeOutCubic(progress);
+    const currentValue = animation.start + (animation.target - animation.start) * eased;
+    element.textContent = formatter ? formatter(currentValue) : String(currentValue);
+
+    if (progress < 1) {
+      animation.frameId = requestAnimationFrame(step);
+    } else {
+      element.textContent = formatter ? formatter(animation.target) : String(animation.target);
+      element.dataset.numberValue = String(animation.target);
+      numberAnimations.delete(element);
+      window.setTimeout(() => {
+        element.classList.remove('number-roll-up', 'number-roll-down');
+      }, 200);
+    }
+  };
+
+  animation.frameId = requestAnimationFrame(step);
+}
+
 function updateLastUpdatedDisplay(date) {
   if (!date) {
     return;
@@ -201,31 +295,32 @@ function updateRuntimeSummary(summary) {
   if (!uptimeEl || !iterationsEl) {
     return;
   }
-  const prevSummary = previousRuntimeSummary || {};
   if (!summary || typeof summary !== 'object') {
-    uptimeEl.textContent = '--';
-    iterationsEl.textContent = '--';
+    animateNumericValue(uptimeEl, null, formatDuration);
+    animateNumericValue(iterationsEl, null, (value) => integerFormatter.format(Math.round(value)));
     uptimeEl.removeAttribute('title');
     iterationsEl.removeAttribute('title');
     previousRuntimeSummary = null;
     return;
   }
   const uptimeSeconds = toNumber(summary.uptime_seconds);
-  uptimeEl.textContent = formatDuration(uptimeSeconds);
+  animateNumericValue(uptimeEl, uptimeSeconds, formatDuration);
   if (summary.started_at) {
     uptimeEl.title = `启动时间：${formatTimestamp(summary.started_at)}`;
   } else {
     uptimeEl.removeAttribute('title');
   }
   const iterations = toNumber(summary.total_iterations);
-  iterationsEl.textContent = Number.isFinite(iterations) ? iterations : '--';
+  animateNumericValue(
+    iterationsEl,
+    iterations,
+    (value) => integerFormatter.format(Math.round(value)),
+  );
   if (Array.isArray(summary.symbols) && summary.symbols.length > 0) {
     iterationsEl.title = `交易币种：${summary.symbols.join(', ')}`;
   } else {
     iterationsEl.removeAttribute('title');
   }
-  flashNumericChange(uptimeEl, uptimeSeconds, toNumber(prevSummary.uptime_seconds));
-  flashNumericChange(iterationsEl, iterations, toNumber(prevSummary.total_iterations));
   previousRuntimeSummary = {
     ...summary,
     uptime_seconds: uptimeSeconds,
@@ -348,6 +443,8 @@ function ensureEquityChart() {
     hoverIndex: null,
     pointerActive: false,
     mappedPoints: [],
+    animationProgress: 1,
+    displayPoints: [],
   };
   canvas.addEventListener('mousemove', handleEquityPointerMove);
   canvas.addEventListener('mouseleave', handleEquityPointerLeave);
@@ -407,6 +504,12 @@ function handleEquityPointerMove(event) {
     chart.pointerActive = false;
     return;
   }
+  if (chart.animationProgress !== undefined && chart.animationProgress < 1) {
+    hideEquityTooltip();
+    chart.hoverIndex = null;
+    chart.pointerActive = false;
+    return;
+  }
   chart.pointerActive = true;
   const rect = canvas.getBoundingClientRect();
   const cursorX = event.clientX - rect.left;
@@ -446,16 +549,98 @@ function handleEquityPointerLeave() {
   hideEquityTooltip();
 }
 
-function animateChartRedraw() {
-  const chart = equityChart || ensureEquityChart();
-  if (!chart || !chart.canvas) {
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function cancelEquityLineAnimation() {
+  if (equityChartAnimationFrame !== null) {
+    cancelAnimationFrame(equityChartAnimationFrame);
+    equityChartAnimationFrame = null;
+  }
+  equityChartAnimation = null;
+}
+
+function scheduleEquityLineAnimationFrame() {
+  if (equityChartAnimationFrame !== null) {
     return;
   }
-  const { canvas } = chart;
-  canvas.classList.remove('chart-redraw');
-  // 强制重绘以重置动画
-  void canvas.offsetWidth;
-  canvas.classList.add('chart-redraw');
+  equityChartAnimationFrame = requestAnimationFrame(stepEquityLineAnimation);
+}
+
+function startEquityLineAnimation(duration = 900) {
+  cancelEquityLineAnimation();
+  equityChartAnimation = {
+    start: performance.now(),
+    duration,
+    progress: 0,
+  };
+  drawEquityChart({ forceProgress: 0 });
+  scheduleEquityLineAnimationFrame();
+}
+
+function stepEquityLineAnimation(timestamp) {
+  equityChartAnimationFrame = null;
+  if (!equityChartAnimation) {
+    drawEquityChart({ forceProgress: 1 });
+    return;
+  }
+  const elapsed = timestamp - equityChartAnimation.start;
+  const progress = clamp(elapsed / equityChartAnimation.duration, 0, 1);
+  equityChartAnimation.progress = progress;
+  drawEquityChart({ forceProgress: progress });
+  if (progress >= 1) {
+    equityChartAnimation = null;
+  } else {
+    scheduleEquityLineAnimationFrame();
+  }
+}
+
+function buildAnimatedSegment(mappedPoints, progress, minTime, horizontalSpan) {
+  if (!Array.isArray(mappedPoints) || mappedPoints.length === 0) {
+    return [];
+  }
+  if (progress >= 1 || horizontalSpan === 0) {
+    return mappedPoints;
+  }
+  if (progress <= 0) {
+    return [mappedPoints[0]];
+  }
+
+  const cutoff = minTime + horizontalSpan * progress;
+  const segment = [mappedPoints[0]];
+
+  for (let i = 1; i < mappedPoints.length; i += 1) {
+    const point = mappedPoints[i];
+    const pointTime = point.original.timestampMs;
+    if (pointTime < cutoff) {
+      segment.push(point);
+      continue;
+    }
+    if (pointTime === cutoff) {
+      segment.push(point);
+      break;
+    }
+    const prev = mappedPoints[i - 1];
+    const prevTime = prev.original.timestampMs;
+    if (cutoff <= prevTime) {
+      break;
+    }
+    const ratio = (cutoff - prevTime) / (pointTime - prevTime);
+    const interpolated = {
+      x: prev.x + (point.x - prev.x) * ratio,
+      y: prev.y + (point.y - prev.y) * ratio,
+      original: {
+        timestamp: new Date(cutoff).toISOString(),
+        timestampMs: cutoff,
+        value: prev.original.value + (point.original.value - prev.original.value) * ratio,
+      },
+    };
+    segment.push(interpolated);
+    break;
+  }
+
+  return segment;
 }
 
 function resolveWebSocketUrl(path) {
@@ -660,7 +845,7 @@ function prepareEquityCanvas(chart) {
   return { width: Math.max(width, 1), height: Math.max(height, 1), context };
 }
 
-function drawEquityChart() {
+function drawEquityChart(options = {}) {
   const chart = ensureEquityChart();
   if (!chart) {
     return;
@@ -671,8 +856,15 @@ function drawEquityChart() {
   }
 
   const { points, palette, placeholder, yMin, yMax } = equityChartState;
+  const progress = typeof options.forceProgress === 'number'
+    ? clamp(options.forceProgress, 0, 1)
+    : equityChartAnimation
+      ? clamp(equityChartAnimation.progress ?? 0, 0, 1)
+      : 1;
+  chart.animationProgress = progress;
   if (!points || points.length === 0) {
     chart.mappedPoints = [];
+    chart.displayPoints = [];
     chart.hoverIndex = null;
     return;
   }
@@ -743,7 +935,13 @@ function drawEquityChart() {
   }));
   chart.mappedPoints = mappedPoints;
   chart.placeholder = placeholder;
-  if (placeholder) {
+
+  const drawingPoints = placeholder
+    ? mappedPoints
+    : buildAnimatedSegment(mappedPoints, progress, minTime, horizontalSpan);
+  chart.displayPoints = drawingPoints;
+
+  if (placeholder || progress < 1) {
     chart.hoverIndex = null;
     hideEquityTooltip();
   }
@@ -795,16 +993,29 @@ function drawEquityChart() {
     context.fillText(label, x - textWidth / 2, height - 8);
   }
 
+  if (!drawingPoints || drawingPoints.length === 0) {
+    return;
+  }
+
+  if (drawingPoints.length === 1) {
+    const singlePoint = drawingPoints[0];
+    context.beginPath();
+    context.fillStyle = palette.solid || '#ffffff';
+    context.arc(singlePoint.x, singlePoint.y, 2.5, 0, Math.PI * 2);
+    context.fill();
+    return;
+  }
+
   context.beginPath();
-  mappedPoints.forEach((point, index) => {
+  drawingPoints.forEach((point, index) => {
     if (index === 0) {
       context.moveTo(point.x, point.y);
     } else {
       context.lineTo(point.x, point.y);
     }
   });
-  context.lineTo(mappedPoints[mappedPoints.length - 1].x, padding.top + plotHeight);
-  context.lineTo(mappedPoints[0].x, padding.top + plotHeight);
+  context.lineTo(drawingPoints[drawingPoints.length - 1].x, padding.top + plotHeight);
+  context.lineTo(drawingPoints[0].x, padding.top + plotHeight);
   context.closePath();
   const gradient = context.createLinearGradient(0, padding.top, 0, padding.top + plotHeight);
   const baseFill = palette.fill || 'rgba(64, 156, 255, 0.2)';
@@ -819,7 +1030,7 @@ function drawEquityChart() {
   context.fill();
 
   context.beginPath();
-  mappedPoints.forEach((point, index) => {
+  drawingPoints.forEach((point, index) => {
     if (index === 0) {
       context.moveTo(point.x, point.y);
     } else {
@@ -831,13 +1042,19 @@ function drawEquityChart() {
   context.lineWidth = 2;
   context.stroke();
 
-  const hoverIndex = !placeholder && Number.isInteger(chart.hoverIndex)
+  const canHighlight = !placeholder && progress >= 1;
+  const hoverIndex = canHighlight && Number.isInteger(chart.hoverIndex)
     ? Math.min(Math.max(chart.hoverIndex, 0), mappedPoints.length - 1)
     : null;
   if (hoverIndex !== chart.hoverIndex) {
     chart.hoverIndex = hoverIndex;
   }
-  const hoverPoint = hoverIndex !== null ? mappedPoints[hoverIndex] : null;
+  const hoverPoint = canHighlight && hoverIndex !== null ? mappedPoints[hoverIndex] : null;
+
+  if (!canHighlight) {
+    hideEquityTooltip();
+    return;
+  }
 
   if (hoverPoint) {
     context.save();
@@ -859,7 +1076,7 @@ function drawEquityChart() {
     context.fill();
     context.stroke();
     context.restore();
-  } else if (placeholder) {
+  } else {
     hideEquityTooltip();
   }
 }
@@ -917,7 +1134,6 @@ function renderEquityChart() {
     }
     const placeholder = buildPlaceholderSeries(currentEquityRange);
     const fingerprint = `placeholder-${currentEquityRange}-${placeholder.points.length}`;
-    const hasChanged = fingerprint !== equityChartFingerprint;
     equityChartState = {
       points: placeholder.points.map((point) => ({
         timestamp: point.timestamp,
@@ -935,10 +1151,8 @@ function renderEquityChart() {
     }
     hideEquityTooltip();
     equityChartFingerprint = fingerprint;
-    drawEquityChart();
-    if (hasChanged) {
-      animateChartRedraw();
-    }
+    cancelEquityLineAnimation();
+    drawEquityChart({ forceProgress: 1 });
     return;
   }
 
@@ -988,15 +1202,19 @@ function renderEquityChart() {
     : `empty-${currentEquityRange}`;
   const hasChanged = fingerprint !== equityChartFingerprint;
   equityChartFingerprint = fingerprint;
-  drawEquityChart();
-
-  if (hasChanged) {
-    animateChartRedraw();
+  if (hasChanged && normalizedPoints.length > 1) {
+    startEquityLineAnimation();
+  } else if (equityChartAnimation) {
+    drawEquityChart();
+  } else {
+    cancelEquityLineAnimation();
+    drawEquityChart({ forceProgress: 1 });
   }
 
   if (
     equityChart
     && equityChart.pointerActive
+    && (equityChart.animationProgress === undefined || equityChart.animationProgress >= 1)
     && Number.isInteger(equityChart.hoverIndex)
     && Array.isArray(equityChart.mappedPoints)
     && equityChart.mappedPoints[equityChart.hoverIndex]
@@ -1083,7 +1301,7 @@ function setStatus(state) {
   }
 }
 
-function updateAccountCard(account, prevAccount = {}) {
+function updateAccountCard(account) {
   const valueEl = document.getElementById('account-value');
   const cashEl = document.getElementById('account-cash');
   const returnEl = document.getElementById('account-return');
@@ -1093,27 +1311,21 @@ function updateAccountCard(account, prevAccount = {}) {
     return;
   }
 
-  valueEl.textContent = formatCurrency(account?.account_value);
-  cashEl.textContent = formatCurrency(account?.available_cash);
-  returnEl.textContent = formatPercent(account?.return_pct);
-  sharpeEl.textContent = formatNumber(account?.sharpe_ratio, 2);
+  animateNumericValue(valueEl, account?.account_value, formatCurrency);
+  animateNumericValue(cashEl, account?.available_cash, formatCurrency);
+  animateNumericValue(returnEl, account?.return_pct, formatPercent);
+  animateNumericValue(sharpeEl, account?.sharpe_ratio, (value) => formatNumber(value, 2));
 
   returnEl.classList.remove('positive', 'negative');
   const returnValue = toNumber(account?.return_pct);
   if (returnValue !== null) {
     returnEl.classList.add(returnValue >= 0 ? 'positive' : 'negative');
   }
-
-  flashNumericChange(valueEl, account?.account_value, prevAccount?.account_value);
-  flashNumericChange(cashEl, account?.available_cash, prevAccount?.available_cash);
-  flashNumericChange(returnEl, account?.return_pct, prevAccount?.return_pct);
-  flashNumericChange(sharpeEl, account?.sharpe_ratio, prevAccount?.sharpe_ratio);
 }
 
 function handleAccountUpdate(account = {}) {
   const safeAccount = account && typeof account === 'object' ? { ...account } : {};
-  const prevAccount = previousAccountSnapshot || {};
-  updateAccountCard(safeAccount, prevAccount);
+  updateAccountCard(safeAccount);
   previousAccountSnapshot = { ...safeAccount };
   if (previousState && typeof previousState === 'object') {
     previousState.account = { ...previousAccountSnapshot };
@@ -1420,22 +1632,16 @@ function updateStrategyOverview(strategy) {
 
   if (leverageEl) {
     const leverageValue = toNumber(latest.leverage);
-    leverageEl.textContent = leverageValue !== null ? `${formatNumber(leverageValue, 2)}x` : '--';
-    flashNumericChange(
+    animateNumericValue(
       leverageEl,
-      leverageValue ?? undefined,
-      prevSummary.leverage ?? undefined,
+      leverageValue,
+      (value) => (value === null ? '--' : `${formatNumber(value, 2)}x`),
     );
   }
 
   if (sizeEl) {
     const sizeValue = getStrategyNotional(latest);
-    sizeEl.textContent = sizeValue !== null ? formatCurrency(sizeValue) : '--';
-    flashNumericChange(
-      sizeEl,
-      sizeValue ?? undefined,
-      prevSummary.size ?? undefined,
-    );
+    animateNumericValue(sizeEl, sizeValue, formatCurrency);
   }
 
   if (updatedEl) {

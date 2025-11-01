@@ -186,12 +186,6 @@ body {
   pointer-events: none;
 }
 
-#equity-chart.chart-redraw {
-  animation: chart-redraw 0.45s ease-out;
-  transform-origin: center;
-  will-change: transform, opacity;
-}
-
 .chart-tooltip {
   position: absolute;
   pointer-events: none;
@@ -223,6 +217,51 @@ body {
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.01em;
+}
+
+.number-roll-up,
+.number-roll-down {
+  display: inline-block;
+  animation-duration: 0.7s;
+  animation-timing-function: cubic-bezier(0.17, 0.88, 0.32, 1.08);
+  animation-fill-mode: both;
+  will-change: transform, opacity;
+}
+
+.number-roll-up {
+  animation-name: number-roll-up;
+}
+
+.number-roll-down {
+  animation-name: number-roll-down;
+}
+
+@keyframes number-roll-up {
+  0% {
+    transform: translateY(60%);
+    opacity: 0.25;
+  }
+  45% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes number-roll-down {
+  0% {
+    transform: translateY(-60%);
+    opacity: 0.25;
+  }
+  45% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 .metrics-strip {
@@ -773,32 +812,6 @@ tbody tr:last-child td {
   transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
-.metric-value.flash-up,
-.metric-value.flash-down,
-#runtime-uptime.flash-up,
-#runtime-uptime.flash-down,
-#runtime-iterations.flash-up,
-#runtime-iterations.flash-down,
-#strategy-confidence-value.flash-up,
-#strategy-confidence-value.flash-down {
-  display: inline-block;
-  will-change: transform;
-}
-
-.metric-value.flash-up,
-#runtime-uptime.flash-up,
-#runtime-iterations.flash-up,
-#strategy-confidence-value.flash-up {
-  animation: number-bounce-up 0.6s ease-out;
-}
-
-.metric-value.flash-down,
-#runtime-uptime.flash-down,
-#runtime-iterations.flash-down,
-#strategy-confidence-value.flash-down {
-  animation: number-bounce-down 0.6s ease-out;
-}
-
 .metric.flash-up,
 .signal-card.flash-up,
 .batch-card.flash-up,
@@ -811,57 +824,6 @@ td.flash-up {
 .batch-card.flash-down,
 td.flash-down {
   animation: pulse-down 0.8s ease;
-}
-
-@keyframes number-bounce-up {
-  0% {
-    transform: translateY(0);
-    text-shadow: none;
-  }
-  30% {
-    transform: translateY(-6px);
-    text-shadow: 0 10px 20px rgba(40, 199, 111, 0.25);
-  }
-  55% {
-    transform: translateY(2px);
-  }
-  100% {
-    transform: translateY(0);
-    text-shadow: none;
-  }
-}
-
-@keyframes number-bounce-down {
-  0% {
-    transform: translateY(0);
-    text-shadow: none;
-  }
-  30% {
-    transform: translateY(6px);
-    text-shadow: 0 -8px 18px rgba(255, 91, 91, 0.25);
-  }
-  55% {
-    transform: translateY(-2px);
-  }
-  100% {
-    transform: translateY(0);
-    text-shadow: none;
-  }
-}
-
-@keyframes chart-redraw {
-  0% {
-    opacity: 0.6;
-    transform: scale(0.995) translateY(2px);
-  }
-  40% {
-    opacity: 1;
-    transform: scale(1.01) translateY(0);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
 }
 
 @keyframes pulse-up {
