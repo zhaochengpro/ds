@@ -3,6 +3,7 @@ openai
 pandas
 schedule
 python-dotenv
+pymysql
 requests
 urllib3
 python-okx

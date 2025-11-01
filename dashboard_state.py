@@ -2,114 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from threading import RLock
 from typing import Any, Dict, List, Optional
 
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _parse_timestamp(value: str) -> Optional[datetime]:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        if value.endswith("Z"):
-            try:
-                return datetime.fromisoformat(value[:-1] + "+00:00")
-            except ValueError:
-                return None
-        return None
-    except TypeError:
-        return None
-
-
-def _sample_history(
-    entries: List[Dict[str, Any]],
-    *,
-    cutoff: datetime,
-    min_interval: timedelta,
-) -> List[Dict[str, Any]]:
-    if not entries:
-        return []
-
-    filtered = [item for item in entries if item["datetime"] >= cutoff]
-    if not filtered:
-        filtered = entries[-1:]
-
-    result: List[Dict[str, Any]] = []
-    last_dt: Optional[datetime] = None
-
-    for item in filtered:
-        dt = item["datetime"]
-        if not result:
-            result.append(item)
-            last_dt = dt
-            continue
-
-        assert last_dt is not None
-        if dt - last_dt >= min_interval:
-            result.append(item)
-            last_dt = dt
-        else:
-            result[-1] = item
-
-    if result and result[-1] is not filtered[-1]:
-        result.append(filtered[-1])
-
-    return [
-        {"timestamp": item["timestamp"], "value": item["value"]}
-        for item in result
-    ]
-
-
-def _build_equity_timeframes(history: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    prepared: List[Dict[str, Any]] = []
-    for entry in history:
-        timestamp = entry.get("timestamp")
-        value = entry.get("value")
-        dt_obj = _parse_timestamp(timestamp)
-        if dt_obj is None:
-            continue
-        prepared.append(
-            {
-                "timestamp": timestamp,
-                "value": float(value or 0.0),
-                "datetime": dt_obj,
-            }
-        )
-
-    if not prepared:
-        return {"day": [], "week": [], "month": [], "year": []}
-
-    prepared.sort(key=lambda item: item["datetime"])
-    now = datetime.now(timezone.utc)
-
-    return {
-        "day": _sample_history(
-            prepared,
-            cutoff=now - timedelta(days=1),
-            min_interval=timedelta(minutes=15),
-        ),
-        "week": _sample_history(
-            prepared,
-            cutoff=now - timedelta(days=7),
-            min_interval=timedelta(hours=1),
-        ),
-        "month": _sample_history(
-            prepared,
-            cutoff=now - timedelta(days=30),
-            min_interval=timedelta(days=1),
-        ),
-        "year": _sample_history(
-            prepared,
-            cutoff=now - timedelta(days=365),
-            min_interval=timedelta(days=7),
-        ),
-    }
+from analytics_utils import build_equity_series, build_equity_timeframes, utc_now_iso
+from db import database
 
 
 class _DashboardState:
@@ -129,11 +26,11 @@ class _DashboardState:
             "available_cash": 0.0,
             "return_pct": 0.0,
             "sharpe_ratio": 0.0,
-            "timestamp": _utc_now(),
+            "timestamp": utc_now_iso(),
         }
         self._positions: Dict[str, Any] = {
             "items": [],
-            "timestamp": _utc_now(),
+            "timestamp": utc_now_iso(),
         }
         self._strategy_batches: List[Dict[str, Any]] = []
         self._signals: Dict[str, List[Dict[str, Any]]] = {}
@@ -152,7 +49,7 @@ class _DashboardState:
                 "available_cash": float(available_cash or 0.0),
                 "return_pct": float(return_pct or 0.0),
                 "sharpe_ratio": float(sharpe_ratio or 0.0),
-                "timestamp": _utc_now(),
+                "timestamp": utc_now_iso(),
             }
             self._equity_history.append(
                 {
@@ -167,11 +64,11 @@ class _DashboardState:
         with self._lock:
             self._positions = {
                 "items": list(positions or []),
-                "timestamp": _utc_now(),
+                "timestamp": utc_now_iso(),
             }
 
     def record_strategy_batch(self, batch: Any) -> None:
-        timestamp = _utc_now()
+        timestamp = utc_now_iso()
         records: List[Dict[str, Any]] = []
 
         if isinstance(batch, dict):
@@ -212,7 +109,7 @@ class _DashboardState:
 
         coin_key = coin.upper()
         signal_copy = dict(signal)
-        signal_copy.setdefault("timestamp", _utc_now())
+        signal_copy.setdefault("timestamp", utc_now_iso())
         if "coin" not in signal_copy:
             signal_copy["coin"] = coin_key
         else:
@@ -252,9 +149,18 @@ class _DashboardState:
             }
 
     def get_equity_timeframes(self) -> Dict[str, List[Dict[str, Any]]]:
+        db_timeframes = database.fetch_equity_timeframes()
+        if db_timeframes:
+            return db_timeframes
         with self._lock:
             history_copy = [dict(entry) for entry in self._equity_history]
-        return _build_equity_timeframes(history_copy)
+        return build_equity_timeframes(history_copy)
+
+    def get_equity_series(self, range_name: str) -> List[Dict[str, Any]]:
+        normalized = (range_name or "").lower()
+        with self._lock:
+            history_copy = [dict(entry) for entry in self._equity_history]
+        return build_equity_series(history_copy, normalized)
 
 
 _STATE = _DashboardState()
@@ -301,6 +207,36 @@ def get_equity_timeframes() -> Dict[str, List[Dict[str, Any]]]:
     return _STATE.get_equity_timeframes()
 
 
+def get_runtime_summary() -> Dict[str, Any]:
+    summary = database.fetch_runtime_summary()
+    if summary:
+        return summary
+    status = "disabled" if not database.enabled else "unavailable"
+    return {
+        "run_id": None,
+        "status": status,
+        "started_at": None,
+        "last_heartbeat": None,
+        "uptime_seconds": 0,
+        "total_iterations": 0,
+        "symbols": [],
+        "timeframe": None,
+        "recent_iterations": [],
+    }
+
+
+def get_equity_series(range_name: str) -> List[Dict[str, Any]]:
+    normalized = (range_name or "").lower()
+    db_series = database.fetch_equity_timeframes(range_name=normalized)
+    if isinstance(db_series, list):
+        return db_series
+    if isinstance(db_series, dict):
+        result = db_series.get(normalized)
+        if isinstance(result, list):
+            return result
+    return _STATE.get_equity_series(normalized)
+
+
 __all__ = [
     "update_account_snapshot",
     "update_positions_snapshot",
@@ -311,4 +247,6 @@ __all__ = [
     "get_strategy_batches",
     "get_strategy_signals",
     "get_equity_timeframes",
+    "get_equity_series",
+    "get_runtime_summary",
 ]

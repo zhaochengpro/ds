@@ -18,6 +18,12 @@
         <span class="status-separator">|</span>
         <span>最后更新：</span>
         <span id="last-updated">--</span>
+        <span class="status-separator">|</span>
+        <span>运行时长：</span>
+        <span id="runtime-uptime">--</span>
+        <span class="status-separator">|</span>
+        <span>循环次数：</span>
+        <span id="runtime-iterations">--</span>
       </div>
     </header>
 
@@ -60,7 +66,7 @@
             </div>
           </div>
           <div class="chart-container">
-            <canvas id="equity-chart"></canvas>
+            <canvas id="equity-chart" aria-label="资金走势图"></canvas>
             <div id="equity-empty" class="chart-empty">暂无资金数据</div>
           </div>
         </section>
@@ -69,41 +75,8 @@
           <div class="strategy-header">
             <div>
               <h2>AI 策略</h2>
-              <p class="card-sub" id="strategy-name">智能量化监控</p>
             </div>
             <span class="strategy-status" id="strategy-status">待机</span>
-          </div>
-          <div class="strategy-overview" id="strategy-overview">
-            <div class="strategy-symbol-line">
-              <span class="strategy-symbol" id="strategy-symbol">--</span>
-              <span class="strategy-action-badge" id="strategy-action">--</span>
-            </div>
-            <div class="strategy-confidence">
-              <span class="strategy-confidence-label">置信度</span>
-              <div class="strategy-confidence-bar">
-                <div class="strategy-confidence-fill" id="strategy-confidence-bar"></div>
-              </div>
-              <span class="strategy-confidence-value" id="strategy-confidence-value">--</span>
-            </div>
-            <dl class="strategy-meta">
-              <div>
-                <dt>杠杆</dt>
-                <dd id="strategy-leverage">--</dd>
-              </div>
-              <div>
-                <dt>仓位规模 (USD)</dt>
-                <dd id="strategy-size">--</dd>
-              </div>
-              <div>
-                <dt>最新信号时间</dt>
-                <dd id="strategy-updated">--</dd>
-              </div>
-              <div>
-                <dt>信号描述</dt>
-                <dd id="strategy-note">--</dd>
-              </div>
-            </dl>
-            <button class="strategy-action-button" type="button" disabled>调整策略参数</button>
           </div>
           <div class="strategy-list-wrapper">
             <div class="strategy-list-header">
@@ -160,11 +133,6 @@
       </section>
     </main>
 
-    <footer class="app-footer">
-      <span>启动命令：<code>python ai_trader.py</code></span>
-    </footer>
-
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-Y0Wh05rqRXDz6z5G3axhDO4vqIymJ9KXcXxteLoI0lp4rWuHwoMvVJE9idh+Nang" crossorigin="anonymous"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

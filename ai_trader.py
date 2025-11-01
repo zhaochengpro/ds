@@ -21,6 +21,7 @@ from account_utils import (
     get_current_positions,
     build_position_payload,
 )
+from db import database
 from dashboard_state import (
     record_strategy_batch,
     record_strategy_signal,
@@ -48,8 +49,10 @@ exchange = ccxt.okx({
     'password': os.getenv('OKX_PASSWORD'),  # OKX需要交易密码
 })
 
-start_time = datetime.now()
+start_time = datetime.now(UTC)
 minutes_elapsed = 0
+RUN_ID = None
+iteration_counter = 0
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -168,6 +171,39 @@ def setup_exchange(leverage, symbol, posSide):
         return False
 
     payload = []
+
+
+def capture_account_snapshot(balance=None):
+    """Fetch and persist the latest account snapshot."""
+    global RUN_ID
+
+    try:
+        balance_data = balance if balance is not None else exchange.fetch_balance()
+    except Exception as exc:  # pragma: no cover - best effort logging
+        logger.debug(f"获取账户余额失败 | {exc}")
+        return None
+
+    snapshot_ts = datetime.now(UTC)
+    account_value, available_cash, return_pct, sharpe_ratio = compute_account_metrics(balance_data or {})
+
+    try:
+        update_account_snapshot(account_value, available_cash, return_pct, sharpe_ratio)
+    except Exception as state_error:  # pragma: no cover - dashboard resilience
+        logger.debug(f"Dashboard state update failed | account snapshot | {state_error}")
+
+    try:
+        database.record_equity_snapshot(
+            RUN_ID,
+            snapshot_ts,
+            account_value,
+            available_cash,
+            return_pct,
+            sharpe_ratio,
+        )
+    except Exception:
+        logger.debug("数据库写入失败：账户快照", exc_info=True)
+
+    return account_value, available_cash, return_pct, sharpe_ratio, snapshot_ts
 def analyze_with_deepseek(price_data):
     """使用DeepSeek分析市场并生成交易信号（增强版）"""
     
@@ -182,14 +218,24 @@ def analyze_with_deepseek(price_data):
     positions_payload_json = json.dumps(positions_payload, ensure_ascii=False, indent=4)
 
     balance = exchange.fetch_balance()
-    account_value, available_cash, return_pct, sharpe_ratio = compute_account_metrics(balance)
+
+    snapshot = capture_account_snapshot(balance)
+    if snapshot is not None:
+        account_value, available_cash, return_pct, sharpe_ratio, snapshot_ts = snapshot
+    else:
+        snapshot_ts = datetime.now(UTC)
+        account_value, available_cash, return_pct, sharpe_ratio = compute_account_metrics(balance or {})
+
     usdt_balance = available_cash
 
     try:
-        update_account_snapshot(account_value, available_cash, return_pct, sharpe_ratio)
         update_positions_snapshot(positions_payload)
     except Exception as state_error:
         logger.debug(f"Dashboard state update failed | account sync | {state_error}")
+    try:
+        database.record_positions_snapshot(RUN_ID, snapshot_ts, positions_payload)
+    except Exception:
+        logger.debug("数据库写入失败：账户/仓位快照", exc_info=True)
 
     prompt = f"""
     自您开始交易以来已过去{minutes_elapsed}分钟。
@@ -336,6 +382,14 @@ def analyze_with_deepseek(price_data):
 
                 5. **risk_usd** (浮点型)：风险金额（入场价至止损位的距离）
                 - 计算公式：|入场价 - 止损价| × 仓位规模 × 杠杆倍数
+                
+                6. **signal** (字符串)：交易信号
+                - "OPEN_LONG"：开多单
+                - "OPEN_SHORT"：开空单
+                - "CLOSE_LONG"：关闭多单
+                - "CLOSE_SHORT"：关闭空单
+                - "HOLD"：当已经有仓位是保持持仓
+                - "WAIT"：当不满足开仓条件时等待
 
                 ---
 
@@ -364,7 +418,7 @@ def analyze_with_deepseek(price_data):
                 - 止盈价：多单需高于开仓价，空单需低于开仓价
                 - 止损价：多单必须低于入场价，空单必须高于入场价
                 - 操作说明需简明扼要（最多500字符）
-                - 当信号为"持仓"或者"等待"时：设置数量=0，杠杆=1，风险字段使用占位符值
+                - 当信号为"持仓"或者"等待"时：设置数量=0，杠杆=0，风险字段使用占位符值
 
                 ---
 
@@ -611,6 +665,13 @@ def analyze_with_deepseek(price_data):
             record_strategy_batch(signal_data)
         except Exception as state_error:
             logger.debug(f"Dashboard state update failed | strategy batch | {state_error}")
+        try:
+            if isinstance(signal_data, dict):
+                database.record_ai_signals(RUN_ID, signal_data.values())
+            elif isinstance(signal_data, list):
+                database.record_ai_signals(RUN_ID, signal_data)
+        except Exception:
+            logger.debug("数据库写入失败：AI信号", exc_info=True)
 
         return signal_data
 
@@ -672,6 +733,10 @@ def create_fallback_signal(price_data):
             record_strategy_signal(str(signal.get("coin", "")).upper(), signal)
     except Exception as state_error:
         logger.debug(f"Dashboard state update failed | fallback strategy | {state_error}")
+    try:
+        database.record_ai_signals(RUN_ID, fallback_signals)
+    except Exception:
+        logger.debug("数据库写入失败：备用信号", exc_info=True)
 
     return fallback_signals
 
@@ -898,6 +963,7 @@ def execute_trade(signal_data, price_data_obj):
             try:
                 latest_positions = build_position_payload(position, signal_history)
                 update_positions_snapshot(latest_positions)
+                database.record_positions_snapshot(RUN_ID, datetime.now(UTC), latest_positions)
             except Exception as state_error:
                 logger.debug(f"Dashboard state update failed | post-trade positions | {state_error}")
         except Exception as e:
@@ -940,27 +1006,55 @@ def get_coins_ohlcv_enhanced(coin_list):
         price_data[coin] = get_market_data(coin)
     return price_data
 
+
+def account_snapshot_job():
+    try:
+        capture_account_snapshot()
+    except Exception:
+        logger.debug("账户快照任务执行失败", exc_info=True)
+
+
+def run_account_snapshot_loop(stop_event: threading.Event) -> None:
+    while not stop_event.is_set():
+        account_snapshot_job()
+        if stop_event.wait(1.0):
+            break
+
+
 def trading_bot():
     """主交易机器人函数"""
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    minutes_elapsed = datetime.now().minute - start_time.minute
+    global iteration_counter, minutes_elapsed
+
+    loop_started_at = datetime.now(UTC)
+    iteration_counter += 1
+    iteration_index = iteration_counter
+    minutes_elapsed = max(
+        0, int((loop_started_at - start_time).total_seconds() // 60)
+    )
+    timestamp_local = loop_started_at.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+
     logger.info("=" * 60)
-    logger.info(f"执行时间: {timestamp}")
+    logger.info(f"执行时间: {timestamp_local}")
     logger.info(f"执行时长: {minutes_elapsed}分钟")
     logger.info("=" * 60)
 
-    # 1. 获取增强版K线数据
     price_data = get_coins_ohlcv_enhanced(coin_list)
     if not price_data:
+        logger.warning("行情数据获取失败，跳过本轮执行")
         return
-    
-    # print(price_data)
 
-    # 2. 使用DeepSeek分析（带重试）
-    signal_data = analyze_with_deepseek_with_retry(price_data)
-
-    # # 3. 执行交易
-    execute_trade(signal_data, price_data)
+    signal_data = None
+    try:
+        signal_data = analyze_with_deepseek_with_retry(price_data)
+        execute_trade(signal_data, price_data)
+    finally:
+        loop_finished_at = datetime.now(UTC)
+        try:
+            database.record_runtime_iteration(
+                RUN_ID, iteration_index, loop_started_at, loop_finished_at, minutes_elapsed
+            )
+        except Exception:
+            logger.debug("数据库写入失败：运行时指标", exc_info=True)
 
 
 
@@ -993,10 +1087,20 @@ def get_fact_amount(symbol, notional, leverage, price):
 
 def main():
     """主函数"""
+    global RUN_ID, start_time, minutes_elapsed, iteration_counter
+
     exchange.httpsProxy = os.getenv('https_proxy')
-    minutes_elapsed = datetime.now().minute
+    database.initialize()
 
     setup_log()
+
+    start_time = datetime.now(UTC)
+    minutes_elapsed = 0
+    iteration_counter = 0
+    RUN_ID = database.register_run(symbols=coin_list or [], timeframe=TRADE_CONFIG.get('timeframe'))
+    if RUN_ID:
+        logger.info(f"当前运行记录ID：{RUN_ID}")
+
     logger.info(f"OKX自动交易机器人启动成功！")
     logger.info("融合技术指标策略 + OKX实盘接口")
     logger.info(f"交易周期: {TRADE_CONFIG['timeframe']}")
@@ -1010,6 +1114,8 @@ def main():
         coin_logger.info("已启用完整技术指标分析和持仓跟踪功能")
         coin_logger.info("=" * 60)
 
+    capture_account_snapshot()
+
     stop_event = threading.Event()
     trading_thread = threading.Thread(
         target=run_trading_loop,
@@ -1018,6 +1124,14 @@ def main():
         daemon=True,
     )
     trading_thread.start()
+
+    account_thread = threading.Thread(
+        target=run_account_snapshot_loop,
+        args=(stop_event,),
+        name="account-snapshot-loop",
+        daemon=True,
+    )
+    account_thread.start()
 
     host = os.getenv('DASHBOARD_HOST', '0.0.0.0') or '0.0.0.0'
     port_value = os.getenv('DASHBOARD_PORT', '8000') or '8000'
@@ -1036,6 +1150,11 @@ def main():
     finally:
         stop_event.set()
         trading_thread.join(timeout=10)
+        account_thread.join(timeout=5)
+        try:
+            database.mark_run_completed(RUN_ID)
+        except Exception:
+            logger.debug("数据库写入失败：结束运行标记", exc_info=True)
         logger.info("交易调度器已停止")
 
 

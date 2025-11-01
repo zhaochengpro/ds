@@ -23,6 +23,16 @@
 
 ### OKX_PASSWORD=
 
+### MYSQL_HOST=127.0.0.1
+
+### MYSQL_PORT=3306
+
+### MYSQL_USER=your_mysql_user
+
+### MYSQL_PASSWORD=your_mysql_password
+
+### MYSQL_DATABASE=ai_trader
+
 ###  视频教程：https://www.youtube.com/watch?v=Yv-AMVaWUVg
 
 
@@ -64,20 +74,20 @@
 
 ### 启动后端与前端
 
-1. 确保 `.env` 中已配置 OKX 和 OpenAI/OpenRouter 相关密钥。
-2. （可选）在环境变量中设置需要监控的币种，例如：
+1. 在 `.env` 中配置交易所密钥、OpenRouter/DeepSeek 密钥以及 MySQL 连接信息 (`MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE`)。
+2. 安装依赖后执行交易机器人（同时会启动 FastAPI 仪表盘）：
    ```bash
-   export DASHBOARD_SYMBOLS="BTC ETH SOL"
+   python ai_trader.py --symbols BTC/USDT ETH/USDT --timeframe 1h --klineNum 200
    ```
-   若省略该变量，后端会基于当前持仓或策略记录自动推断。
-3. 启动 FastAPI 服务：
-   ```bash
-   uvicorn dashboard_backend:app --host 0.0.0.0 --port 8000
-   ```
-4. 浏览器访问 `http://localhost:8000/`，即可查看实时账户收益、持仓和 AI 策略信号。
+3. 浏览器访问 `http://localhost:8000/`，可查看账户指标、实时持仓、AI 信号、资金走势与运行时数据。仪表盘页头会展示最新的运行时长与循环次数。
+4. 首次运行会自动初始化所需的 MySQL 表结构，随后账户快照、持仓历史、AI 信号以及运行时指标会滚动写入数据库。
 
 ### API 说明
 
-- `GET /api/overview`：返回账户指标、当前持仓及各币种的策略历史，可通过 `force_refresh=true` 触发从交易所拉取最新数据。
-- `GET /api/account`、`/api/positions`、`/api/strategies`：分别获取单独的数据模块。
-- `GET /api/health`：快速检查后端状态与配置。
+- `GET /api/state`：返回账户资产、当前持仓、策略信号以及聚合的资金走势。
+- `GET /api/account`：单独获取账户核心指标。
+- `GET /api/positions`：当前持仓列表。
+- `GET /api/strategies/batches`：最近的 AI 批量信号。
+- `GET /api/strategies/signals`：按币种拆分的信号历史。
+- `GET /api/analytics/equity`：从 MySQL 聚合出的日/周/月/年资金走势图数据。
+- `GET /api/analytics/runtime`：运行时长、迭代次数及最近循环耗时信息。

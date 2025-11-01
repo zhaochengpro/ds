@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from dashboard_state import (
     get_account_snapshot,
+    get_equity_series,
     get_equity_timeframes,
     get_positions_snapshot,
     get_strategy_batches,
     get_strategy_signals,
+    get_runtime_summary,
 )
 
 
@@ -70,8 +72,16 @@ def create_dashboard_app() -> FastAPI:
         }
 
     @app.get("/api/analytics/equity")
-    def equity_endpoint() -> Dict[str, Any]:
+    def equity_endpoint(range: Optional[str] = Query(None)) -> Dict[str, Any]:
+        if range:
+            normalized = (range or "").lower()
+            points = get_equity_series(normalized)
+            return {"range": normalized, "points": points}
         return get_equity_timeframes()
+
+    @app.get("/api/analytics/runtime")
+    def runtime_endpoint() -> Dict[str, Any]:
+        return get_runtime_summary()
 
     return app
 

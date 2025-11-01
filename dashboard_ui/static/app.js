@@ -1,8 +1,11 @@
 const API_ENDPOINT = '/api/state';
 const ACCOUNT_ENDPOINT = '/api/account';
+const EQUITY_ENDPOINT = '/api/analytics/equity';
+const RUNTIME_ENDPOINT = '/api/analytics/runtime';
 const REFRESH_INTERVAL_MS = 5000;
 const ACCOUNT_REFRESH_INTERVAL_MS = 2000;
 const EQUITY_RANGES = ['day', 'week', 'month', 'year'];
+const EQUITY_DEFAULT_RANGE = 'day';
 const EQUITY_COLORS = {
   day: {
     line: 'rgba(167, 130, 255, 0.9)',
@@ -26,6 +29,27 @@ const EQUITY_COLORS = {
   },
 };
 
+const PLACEHOLDER_EQUITY_BASELINE = 10000;
+const PLACEHOLDER_RANGE_CONFIG = {
+  day: { segments: 6, stepMs: 4 * 60 * 60 * 1000 },
+  week: { segments: 7, stepMs: 24 * 60 * 60 * 1000 },
+  month: { segments: 6, stepMs: 5 * 24 * 60 * 60 * 1000 },
+  year: { segments: 6, stepMs: 60 * 24 * 60 * 60 * 1000 },
+};
+
+function adjustAlpha(color, alpha) {
+  if (!color || typeof color !== 'string') {
+    return color;
+  }
+  if (color.startsWith('rgba')) {
+    return color.replace(/rgba\(([^,]+),([^,]+),([^,]+),[^)]+\)/, (_, r, g, b) => `rgba(${r.trim()}, ${g.trim()}, ${b.trim()}, ${alpha})`);
+  }
+  if (color.startsWith('rgb')) {
+    return color.replace(/rgb\(([^)]+)\)/, (_, channels) => `rgba(${channels}, ${alpha})`);
+  }
+  return color;
+}
+
 const CONFIDENCE_KEYWORDS = {
   HIGH: 82,
   MEDIUM: 55,
@@ -45,15 +69,24 @@ const numberFormatter = new Intl.NumberFormat('zh-CN', {
 let previousState = null;
 let previousAccountSnapshot = null;
 let previousStrategySummary = null;
+let previousRuntimeSummary = null;
 let equitySeries = {
   day: [],
   week: [],
   month: [],
   year: [],
 };
-let currentEquityRange = 'day';
+let currentEquityRange = EQUITY_DEFAULT_RANGE;
 let equityChart = null;
+let equityTooltip = null;
 let latestDataTimestamp = null;
+let equityChartState = {
+  points: [],
+  palette: getEquityColors('day'),
+  placeholder: true,
+  yMin: null,
+  yMax: null,
+};
 
 function toNumber(value) {
   const parsed = Number(value);
@@ -90,6 +123,23 @@ function formatPercent(value) {
     return '--';
   }
   return `${num.toFixed(2)}%`;
+}
+
+function formatDuration(seconds) {
+  const total = toNumber(seconds);
+  if (total === null || total < 0) {
+    return '--';
+  }
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = Math.floor(total % 60);
+  if (hours > 0) {
+    return `${hours}小时${minutes.toString().padStart(2, '0')}分`;
+  }
+  if (minutes > 0) {
+    return `${minutes}分${secs.toString().padStart(2, '0')}秒`;
+  }
+  return `${secs}秒`;
 }
 
 function formatTimestamp(value) {
@@ -139,6 +189,36 @@ function resetLastUpdatedFromSources(timestamps) {
   }
   latestDataTimestamp = latest;
   updateLastUpdatedDisplay(latest);
+}
+
+function updateRuntimeSummary(summary) {
+  const uptimeEl = document.getElementById('runtime-uptime');
+  const iterationsEl = document.getElementById('runtime-iterations');
+  if (!uptimeEl || !iterationsEl) {
+    return;
+  }
+  if (!summary || typeof summary !== 'object') {
+    uptimeEl.textContent = '--';
+    iterationsEl.textContent = '--';
+    uptimeEl.removeAttribute('title');
+    iterationsEl.removeAttribute('title');
+    return;
+  }
+  const uptimeSeconds = toNumber(summary.uptime_seconds);
+  uptimeEl.textContent = formatDuration(uptimeSeconds);
+  if (summary.started_at) {
+    uptimeEl.title = `启动时间：${formatTimestamp(summary.started_at)}`;
+  } else {
+    uptimeEl.removeAttribute('title');
+  }
+  const iterations = toNumber(summary.total_iterations);
+  iterationsEl.textContent = Number.isFinite(iterations) ? iterations : '--';
+  if (Array.isArray(summary.symbols) && summary.symbols.length > 0) {
+    iterationsEl.title = `交易币种：${summary.symbols.join(', ')}`;
+  } else {
+    iterationsEl.removeAttribute('title');
+  }
+  previousRuntimeSummary = summary;
 }
 
 function applyLastUpdated(timestamp) {
@@ -236,89 +316,417 @@ function ensureEquityChart() {
   if (equityChart) {
     return equityChart;
   }
-  if (typeof Chart === 'undefined') {
-    return null;
-  }
   const canvas = document.getElementById('equity-chart');
   if (!canvas) {
     return null;
   }
   const context = canvas.getContext('2d');
-  equityChart = new Chart(context, {
-    type: 'line',
-    data: {
-      labels: [],
-      datasets: [
-        {
-          label: '账户权益',
-          data: [],
-          borderColor: 'rgba(40, 199, 111, 0.85)',
-          backgroundColor: 'rgba(40, 199, 111, 0.15)',
-          tension: 0.35,
-          fill: true,
-          borderWidth: 2,
-          pointRadius: 0,
-          pointHoverRadius: 4,
-          cubicInterpolationMode: 'monotone',
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          mode: 'index',
-          intersect: false,
-          callbacks: {
-            label: (ctx) => `账户权益：${formatCurrency(ctx.parsed.y)}`,
-          },
-        },
-      },
-      interaction: {
-        mode: 'index',
-        intersect: false,
-      },
-      scales: {
-        x: {
-          grid: {
-            color: 'rgba(255, 255, 255, 0.08)',
-          },
-          ticks: {
-            color: 'rgba(255, 255, 255, 0.6)',
-            maxRotation: 0,
-            autoSkip: true,
-            maxTicksLimit: 6,
-          },
-        },
-        y: {
-          grid: {
-            color: 'rgba(255, 255, 255, 0.08)',
-          },
-          ticks: {
-            color: 'rgba(255, 255, 255, 0.6)',
-            callback: (value) => formatCurrency(value).replace('US$', '$'),
-          },
-        },
-      },
-    },
+  if (!context) {
+    return null;
+  }
+  const container = canvas.parentElement;
+  if (container && !equityTooltip) {
+    equityTooltip = document.createElement('div');
+    equityTooltip.className = 'chart-tooltip';
+    container.appendChild(equityTooltip);
+  }
+  equityChart = {
+    canvas,
+    context,
+    hoverIndex: null,
+    pointerActive: false,
+    mappedPoints: [],
+  };
+  canvas.addEventListener('mousemove', handleEquityPointerMove);
+  canvas.addEventListener('mouseleave', handleEquityPointerLeave);
+  window.addEventListener('resize', () => {
+    drawEquityChart();
   });
   return equityChart;
+}
+
+function hideEquityTooltip() {
+  if (equityTooltip) {
+    equityTooltip.classList.remove('is-visible');
+  }
+}
+
+function updateEquityTooltip(targetPoint, chart) {
+  if (!targetPoint || !chart) {
+    hideEquityTooltip();
+    return;
+  }
+  const { canvas } = chart;
+  const parent = canvas.parentElement;
+  if (!parent) {
+    hideEquityTooltip();
+    return;
+  }
+  if (!equityTooltip) {
+    equityTooltip = document.createElement('div');
+    equityTooltip.className = 'chart-tooltip';
+    parent.appendChild(equityTooltip);
+  }
+  const tooltip = equityTooltip;
+  const timestampLabel = formatTimestamp(targetPoint.original.timestamp);
+  const valueLabel = formatCurrency(targetPoint.original.value).replace('US$', '$');
+  tooltip.innerHTML = `
+    <div class="chart-tooltip-time">${timestampLabel}</div>
+    <div class="chart-tooltip-value">${valueLabel}</div>
+  `;
+  tooltip.classList.add('is-visible');
+  const parentRect = parent.getBoundingClientRect();
+  const canvasRect = canvas.getBoundingClientRect();
+  const anchorLeft = canvasRect.left + targetPoint.x - parentRect.left;
+  const anchorTop = canvasRect.top + targetPoint.y - parentRect.top;
+  tooltip.style.left = `${anchorLeft}px`;
+  tooltip.style.top = `${anchorTop}px`;
+}
+
+function handleEquityPointerMove(event) {
+  const chart = ensureEquityChart();
+  if (!chart) {
+    return;
+  }
+  const { canvas, mappedPoints } = chart;
+  if (equityChartState.placeholder || !Array.isArray(mappedPoints) || mappedPoints.length === 0) {
+    hideEquityTooltip();
+    chart.hoverIndex = null;
+    chart.pointerActive = false;
+    return;
+  }
+  chart.pointerActive = true;
+  const rect = canvas.getBoundingClientRect();
+  const cursorX = event.clientX - rect.left;
+  let nearestIndex = 0;
+  let minDistance = Number.POSITIVE_INFINITY;
+  mappedPoints.forEach((point, index) => {
+    const distance = Math.abs(point.x - cursorX);
+    if (distance < minDistance) {
+      minDistance = distance;
+      nearestIndex = index;
+    }
+  });
+  if (chart.hoverIndex !== nearestIndex) {
+    chart.hoverIndex = nearestIndex;
+    drawEquityChart();
+  }
+  const refreshedPoints = chart.mappedPoints || mappedPoints;
+  const targetPoint = refreshedPoints[nearestIndex];
+  if (targetPoint) {
+    updateEquityTooltip(targetPoint, chart);
+  } else {
+    hideEquityTooltip();
+  }
+}
+
+function handleEquityPointerLeave() {
+  const chart = equityChart;
+  if (!chart) {
+    hideEquityTooltip();
+    return;
+  }
+  chart.pointerActive = false;
+  if (chart.hoverIndex !== null) {
+    chart.hoverIndex = null;
+    drawEquityChart();
+  }
+  hideEquityTooltip();
+}
+
+function prepareEquityCanvas(chart) {
+  const { canvas, context } = chart;
+  const parent = canvas.parentElement;
+  if (!parent) {
+    return { width: 0, height: 0, context };
+  }
+  const width = parent.clientWidth || canvas.clientWidth || 0;
+  const height = parent.clientHeight || canvas.clientHeight || 0;
+  const dpr = window.devicePixelRatio || 1;
+  const scaledWidth = Math.max(1, Math.floor(width * dpr));
+  const scaledHeight = Math.max(1, Math.floor(height * dpr));
+  if (canvas.width !== scaledWidth || canvas.height !== scaledHeight) {
+    canvas.width = scaledWidth;
+    canvas.height = scaledHeight;
+  }
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.clearRect(0, 0, Math.max(width, 1), Math.max(height, 1));
+  return { width: Math.max(width, 1), height: Math.max(height, 1), context };
+}
+
+function drawEquityChart() {
+  const chart = ensureEquityChart();
+  if (!chart) {
+    return;
+  }
+  const { width, height, context } = prepareEquityCanvas(chart);
+  if (width <= 0 || height <= 0) {
+    return;
+  }
+
+  const { points, palette, placeholder, yMin, yMax } = equityChartState;
+  if (!points || points.length === 0) {
+    chart.mappedPoints = [];
+    chart.hoverIndex = null;
+    return;
+  }
+
+  const padding = {
+    top: 18,
+    right: 32,
+    bottom: 36,
+    left: 72,
+  };
+
+  const plotWidth = Math.max(width - padding.left - padding.right, 8);
+  const plotHeight = Math.max(height - padding.top - padding.bottom, 8);
+
+  const minTime = points[0].timestampMs;
+  const maxTime = points[points.length - 1].timestampMs;
+  const horizontalSpan = Math.max(maxTime - minTime, 1);
+
+  const valueList = points.map((p) => p.value);
+  const computedMax = valueList.length > 0 ? Math.max(...valueList) : 1;
+
+  let minValue = Number.isFinite(yMin) ? yMin : 0;
+  let maxValue = Number.isFinite(yMax) ? yMax : computedMax;
+
+  if (!Number.isFinite(minValue)) {
+    minValue = 0;
+  }
+  if (!Number.isFinite(maxValue)) {
+    maxValue = 1;
+  }
+
+  if (!Number.isFinite(yMin)) {
+    minValue = 0;
+  }
+
+  if (!Number.isFinite(yMax)) {
+    maxValue = Math.max(computedMax, minValue + 1);
+  }
+
+  if (maxValue <= minValue) {
+    maxValue = minValue + 1;
+  }
+
+  const verticalSpan = Math.max(maxValue - minValue, 1e-6);
+
+  const mapX = (timestamp) => {
+    if (horizontalSpan === 0) {
+      return padding.left + plotWidth / 2;
+    }
+    return (
+      padding.left + ((timestamp - minTime) / horizontalSpan) * plotWidth
+    );
+  };
+
+  const mapY = (value) => {
+    if (verticalSpan === 0) {
+      return padding.top + plotHeight / 2;
+    }
+    return (
+      padding.top + (1 - (value - minValue) / verticalSpan) * plotHeight
+    );
+  };
+
+  const mappedPoints = points.map((point) => ({
+    x: mapX(point.timestampMs),
+    y: mapY(point.value),
+    original: point,
+  }));
+  chart.mappedPoints = mappedPoints;
+  chart.placeholder = placeholder;
+  if (placeholder) {
+    chart.hoverIndex = null;
+    hideEquityTooltip();
+  }
+
+  context.lineJoin = 'round';
+  context.lineCap = 'round';
+
+  context.lineWidth = 1;
+  context.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+  const horizontalLines = 4;
+  for (let i = 0; i <= horizontalLines; i += 1) {
+    const y = padding.top + (plotHeight / horizontalLines) * i;
+    context.beginPath();
+    context.moveTo(padding.left, y);
+    context.lineTo(width - padding.right, y);
+    context.stroke();
+  }
+
+  context.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+  context.beginPath();
+  context.moveTo(padding.left, padding.top);
+  context.lineTo(padding.left, padding.top + plotHeight);
+  context.lineTo(width - padding.right, padding.top + plotHeight);
+  context.stroke();
+
+  context.fillStyle = 'rgba(255, 255, 255, 0.6)';
+  context.font = '12px/1.4 "Inter", "PingFang SC", "Helvetica Neue", Arial, sans-serif';
+  context.textBaseline = 'middle';
+  const yTicks = 4;
+  for (let i = 0; i <= yTicks; i += 1) {
+    const value = minValue + (verticalSpan * i) / yTicks;
+    const y = padding.top + plotHeight - (plotHeight * i) / yTicks;
+    const label = formatCurrency(value).replace('US$', '$');
+    context.fillText(label, 12, y);
+  }
+
+  const xTickCount = Math.min(points.length - 1, 4);
+  context.textBaseline = 'alphabetic';
+  for (let i = 0; i <= xTickCount; i += 1) {
+    const ratio = xTickCount === 0 ? 0 : i / xTickCount;
+    const index = Math.min(
+      points.length - 1,
+      Math.round(ratio * (points.length - 1)),
+    );
+    const point = points[index];
+    const x = mapX(point.timestampMs);
+    const label = formatChartLabel(point.timestampMs, currentEquityRange);
+    const textWidth = context.measureText(label).width;
+    context.fillText(label, x - textWidth / 2, height - 8);
+  }
+
+  context.beginPath();
+  mappedPoints.forEach((point, index) => {
+    if (index === 0) {
+      context.moveTo(point.x, point.y);
+    } else {
+      context.lineTo(point.x, point.y);
+    }
+  });
+  context.lineTo(mappedPoints[mappedPoints.length - 1].x, padding.top + plotHeight);
+  context.lineTo(mappedPoints[0].x, padding.top + plotHeight);
+  context.closePath();
+  const gradient = context.createLinearGradient(0, padding.top, 0, padding.top + plotHeight);
+  const baseFill = palette.fill || 'rgba(64, 156, 255, 0.2)';
+  if (placeholder) {
+    gradient.addColorStop(0, adjustAlpha(baseFill, 0.2));
+    gradient.addColorStop(1, adjustAlpha(baseFill, 0.05));
+  } else {
+    gradient.addColorStop(0, baseFill);
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  }
+  context.fillStyle = gradient;
+  context.fill();
+
+  context.beginPath();
+  mappedPoints.forEach((point, index) => {
+    if (index === 0) {
+      context.moveTo(point.x, point.y);
+    } else {
+      context.lineTo(point.x, point.y);
+    }
+  });
+  const baseLine = palette.line || 'rgba(64, 156, 255, 0.85)';
+  context.strokeStyle = placeholder ? adjustAlpha(baseLine, 0.6) : baseLine;
+  context.lineWidth = 2;
+  context.stroke();
+
+  const hoverIndex = !placeholder && Number.isInteger(chart.hoverIndex)
+    ? Math.min(Math.max(chart.hoverIndex, 0), mappedPoints.length - 1)
+    : null;
+  if (hoverIndex !== chart.hoverIndex) {
+    chart.hoverIndex = hoverIndex;
+  }
+  const hoverPoint = hoverIndex !== null ? mappedPoints[hoverIndex] : null;
+
+  if (hoverPoint) {
+    context.save();
+    context.setLineDash([4, 4]);
+    context.strokeStyle = adjustAlpha(palette.line || '#ffffff', 0.45);
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(hoverPoint.x, padding.top);
+    context.lineTo(hoverPoint.x, padding.top + plotHeight);
+    context.stroke();
+    context.restore();
+
+    context.save();
+    context.fillStyle = '#0b101a';
+    context.strokeStyle = palette.solid || '#ffffff';
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(hoverPoint.x, hoverPoint.y, 4, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.restore();
+  } else if (placeholder) {
+    hideEquityTooltip();
+  }
+}
+
+function resolveBaselineValue() {
+  const candidates = [
+    previousAccountSnapshot?.account_value,
+    previousState?.account?.account_value,
+  ];
+
+  for (const candidate of candidates) {
+    const numeric = toNumber(candidate);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric;
+    }
+  }
+
+  return PLACEHOLDER_EQUITY_BASELINE;
+}
+
+function buildPlaceholderSeries(range) {
+  const baseline = Math.max(resolveBaselineValue(), 1);
+  const config = PLACEHOLDER_RANGE_CONFIG[range] || PLACEHOLDER_RANGE_CONFIG.day;
+  const now = Date.now();
+  const points = [];
+
+  for (let i = config.segments; i >= 0; i -= 1) {
+    const timestamp = now - config.stepMs * i;
+    points.push({
+      timestamp: new Date(timestamp).toISOString(),
+      timestampMs: timestamp,
+      value: baseline,
+    });
+  }
+
+  const padding = Math.max(baseline * 0.15, baseline > 1 ? baseline * 0.1 : 1);
+  const min = Math.max(baseline - padding, 0);
+  const max = baseline + padding;
+
+  return {
+    points,
+    suggestedMin: min,
+    suggestedMax: max > min ? max : min + 1,
+  };
 }
 
 function renderEquityChart() {
   const activeData = equitySeries[currentEquityRange] || [];
   const emptyEl = document.getElementById('equity-empty');
+  const palette = getEquityColors(currentEquityRange);
+
   if (!activeData || activeData.length === 0) {
     if (emptyEl) {
       emptyEl.style.display = 'flex';
     }
+    const placeholder = buildPlaceholderSeries(currentEquityRange);
+    equityChartState = {
+      points: placeholder.points.map((point) => ({
+        timestamp: point.timestamp,
+        timestampMs: point.timestampMs ?? point.timestamp,
+        value: point.value,
+      })),
+      palette,
+      placeholder: true,
+      yMin: placeholder.suggestedMin,
+      yMax: placeholder.suggestedMax,
+    };
     if (equityChart) {
-      equityChart.data.labels = [];
-      equityChart.data.datasets[0].data = [];
-      equityChart.update('none');
+      equityChart.hoverIndex = null;
+      equityChart.pointerActive = false;
     }
+    hideEquityTooltip();
+    drawEquityChart();
     return;
   }
 
@@ -326,60 +734,107 @@ function renderEquityChart() {
     emptyEl.style.display = 'none';
   }
 
-  const chart = ensureEquityChart();
-  if (!chart) {
-    return;
-  }
+  const normalizedPoints = activeData
+    .map((point) => {
+      if (!point || !point.timestamp) {
+        return null;
+      }
+      const timestampMs = Number.isFinite(point.timestampMs)
+        ? point.timestampMs
+        : toDate(point.timestamp)?.getTime();
+      if (!Number.isFinite(timestampMs)) {
+        return null;
+      }
+      const numericValue = toNumber(point.value);
+      if (!Number.isFinite(numericValue)) {
+        return null;
+      }
+      return {
+        timestamp: point.timestamp,
+        timestampMs,
+        value: numericValue,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.timestampMs - b.timestampMs);
 
-  const palette = getEquityColors(currentEquityRange);
-  chart.data.datasets[0].borderColor = palette.line;
-  chart.data.datasets[0].backgroundColor = palette.fill;
-  chart.data.labels = activeData.map((point) => formatChartLabel(point.timestamp, currentEquityRange));
-  chart.data.datasets[0].data = activeData.map((point) => Number(point.value) || 0);
-  chart.update('none');
+  const values = normalizedPoints.map((point) => point.value);
+  const minValue = values.length > 0 ? Math.min(...values) : null;
+  const suggestedMin = Number.isFinite(minValue) ? minValue - 1 : 0;
+
+  equityChartState = {
+    points: normalizedPoints,
+    palette,
+    placeholder: false,
+    yMin: suggestedMin,
+    yMax: null,
+  };
+  drawEquityChart();
+
+  if (
+    equityChart
+    && equityChart.pointerActive
+    && Number.isInteger(equityChart.hoverIndex)
+    && Array.isArray(equityChart.mappedPoints)
+    && equityChart.mappedPoints[equityChart.hoverIndex]
+  ) {
+    updateEquityTooltip(
+      equityChart.mappedPoints[equityChart.hoverIndex],
+      equityChart,
+    );
+  } else {
+    hideEquityTooltip();
+  }
 }
 
 function applyRangeTheme(range) {
   const palette = getEquityColors(range);
   document.documentElement.style.setProperty('--equity-accent', palette.solid);
-  if (equityChart) {
-    equityChart.data.datasets[0].borderColor = palette.line;
-    equityChart.data.datasets[0].backgroundColor = palette.fill;
-    equityChart.update('none');
-  }
+  equityChartState = {
+    ...equityChartState,
+    palette,
+  };
+  drawEquityChart();
 }
 
-function setActiveRange(range) {
-  if (!EQUITY_RANGES.includes(range)) {
-    return;
-  }
-  currentEquityRange = range;
+function setActiveRange(range, options = {}) {
+  const normalized = EQUITY_RANGES.includes(range) ? range : EQUITY_DEFAULT_RANGE;
+  currentEquityRange = normalized;
   document.querySelectorAll('.range-button').forEach((button) => {
-    button.classList.toggle('is-active', button.dataset.range === range);
+    button.classList.toggle('is-active', button.dataset.range === normalized);
   });
-  applyRangeTheme(range);
+  applyRangeTheme(normalized);
+  const hasData = Array.isArray(equitySeries[normalized]) && equitySeries[normalized].length > 0;
   renderEquityChart();
+  if (!hasData || options.force) {
+    fetchEquity(normalized, { force: true });
+  }
 }
 
-function updateEquitySeries(series) {
-  if (!series || typeof series !== 'object') {
-    return;
-  }
-
-  EQUITY_RANGES.forEach((range) => {
-    const points = Array.isArray(series[range]) ? series[range] : [];
-    equitySeries[range] = points.map((point) => ({
-      timestamp: point.timestamp,
-      value: Number(point.value) || 0,
-    }));
-  });
-
-  if (!EQUITY_RANGES.includes(currentEquityRange)) {
-    currentEquityRange = 'day';
-  }
-
-  applyRangeTheme(currentEquityRange);
-  renderEquityChart();
+function setEquitySeries(range, points) {
+  const normalizedRange = EQUITY_RANGES.includes(range) ? range : EQUITY_DEFAULT_RANGE;
+  const list = Array.isArray(points) ? points : [];
+  equitySeries[normalizedRange] = list
+    .map((point) => {
+      if (!point || !point.timestamp) {
+        return null;
+      }
+      const numericValue = toNumber(point.value);
+      if (numericValue === null) {
+        return null;
+      }
+      const timestampMs = toDate(point.timestamp)?.getTime();
+      if (!Number.isFinite(timestampMs)) {
+        return null;
+      }
+      return {
+        timestamp: point.timestamp,
+        timestampMs,
+        value: numericValue,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.timestampMs - b.timestampMs);
 }
 
 function setStatus(state) {
@@ -680,33 +1135,33 @@ function updateStrategyOverview(strategy) {
   const latest = getLatestStrategySignal(strategy);
   const defaultName = '智能量化监控';
 
-  if (!latest) {
-    symbolEl.textContent = '--';
-    setStrategyActionBadge(actionEl, '');
-    confidenceValueEl.textContent = '--';
-    confidenceBarEl.style.width = '0%';
-    if (statusEl) {
-      statusEl.textContent = '待机';
-      statusEl.classList.remove('is-online');
-    }
-    if (nameEl) {
-      nameEl.textContent = defaultName;
-    }
-    if (leverageEl) {
-      leverageEl.textContent = '--';
-    }
-    if (sizeEl) {
-      sizeEl.textContent = '--';
-    }
-    if (updatedEl) {
-      updatedEl.textContent = '--';
-    }
-    if (noteEl) {
-      noteEl.textContent = '--';
-    }
-    previousStrategySummary = null;
-    return;
-  }
+  // if (!latest) {
+  //   symbolEl.textContent = '--';
+  //   setStrategyActionBadge(actionEl, '');
+  //   confidenceValueEl.textContent = '--';
+  //   confidenceBarEl.style.width = '0%';
+  //   if (statusEl) {
+  //     statusEl.textContent = '待机';
+  //     statusEl.classList.remove('is-online');
+  //   }
+  //   if (nameEl) {
+  //     nameEl.textContent = defaultName;
+  //   }
+  //   if (leverageEl) {
+  //     leverageEl.textContent = '--';
+  //   }
+  //   if (sizeEl) {
+  //     sizeEl.textContent = '--';
+  //   }
+  //   if (updatedEl) {
+  //     updatedEl.textContent = '--';
+  //   }
+  //   if (noteEl) {
+  //     noteEl.textContent = '--';
+  //   }
+  //   previousStrategySummary = null;
+  //   return;
+  // }
 
   const normalizedCoin = normalizeSymbol(latest.coin || latest.symbol);
   symbolEl.textContent = normalizedCoin || '--';
@@ -882,6 +1337,7 @@ function updateStrategyBatches(batches, prevBatches = []) {
               <span class="${actionClass}">${action}</span>
               <span class="batch-notional">规模：${formatCurrency(signal.usdt_amount)}</span>
               <span>杠杆：${formatNumber(signal.leverage, 2)}x</span>
+              <span>理由：${signal.reason || signal.justification || '—'}</span>
             </li>
           `;
         })
@@ -929,10 +1385,9 @@ function renderState(state) {
 
   handleAccountUpdate(account);
   updatePositionsTable(positions, prevPositions);
-  updateStrategyOverview(strategy);
+  // updateStrategyOverview(strategy);
   updateStrategySignals(strategy, prevStrategy);
   updateStrategyBatches(strategy.batches, prevStrategy?.batches || []);
-  updateEquitySeries(state?.equity);
 
   const timestamps = [account.timestamp, positions.timestamp];
   if (Array.isArray(strategy?.batches) && strategy.batches.length > 0) {
@@ -976,18 +1431,92 @@ async function fetchAccount() {
   }
 }
 
+async function fetchEquity(range = currentEquityRange, options = {}) {
+  const normalized = EQUITY_RANGES.includes(range) ? range : EQUITY_DEFAULT_RANGE;
+  const force = options.force === true;
+  const cached = equitySeries[normalized];
+
+  if (!force && Array.isArray(cached) && cached.length > 0) {
+    if (normalized === currentEquityRange) {
+      renderEquityChart();
+    }
+    return;
+  }
+
+  try {
+    const response = await fetch(`${EQUITY_ENDPOINT}?range=${encodeURIComponent(normalized)}`, {
+      cache: 'no-store',
+    });
+    if (!response.ok) {
+      throw new Error(`请求失败：${response.status}`);
+    }
+    const payload = await response.json();
+
+    let resolvedRange = normalized;
+    let rawPoints = [];
+    if (Array.isArray(payload)) {
+      rawPoints = payload;
+    } else if (payload && typeof payload === 'object') {
+      if (typeof payload.range === 'string') {
+        const candidate = payload.range.toLowerCase();
+        if (EQUITY_RANGES.includes(candidate)) {
+          resolvedRange = candidate;
+        }
+      }
+      if (Array.isArray(payload.points)) {
+        rawPoints = payload.points;
+      } else if (Array.isArray(payload[resolvedRange])) {
+        rawPoints = payload[resolvedRange];
+      }
+    }
+
+    setEquitySeries(resolvedRange, rawPoints);
+
+    if (resolvedRange === currentEquityRange) {
+      renderEquityChart();
+    }
+
+    const latestPoint = equitySeries[resolvedRange]?.[equitySeries[resolvedRange].length - 1];
+    if (latestPoint?.timestamp) {
+      applyLastUpdated(latestPoint.timestamp);
+    }
+  } catch (error) {
+    console.error('获取资金走势失败', error);
+  }
+}
+
+async function fetchRuntimeSummary() {
+  try {
+    const response = await fetch(RUNTIME_ENDPOINT, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error(`请求失败：${response.status}`);
+    }
+    const summary = await response.json();
+    updateRuntimeSummary(summary);
+  } catch (error) {
+    console.error('获取运行时数据失败', error);
+    if (!previousRuntimeSummary) {
+      updateRuntimeSummary(null);
+    }
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.range-button').forEach((button) => {
     button.addEventListener('click', () => {
       if (button.dataset.range) {
-        setActiveRange(button.dataset.range);
+        setActiveRange(button.dataset.range, { force: true });
       }
     });
   });
 
-  setActiveRange(currentEquityRange);
+  currentEquityRange = EQUITY_DEFAULT_RANGE;
+  setActiveRange(EQUITY_DEFAULT_RANGE, { force: true });
   fetchState();
   fetchAccount();
+  fetchRuntimeSummary();
   setInterval(fetchState, REFRESH_INTERVAL_MS);
   setInterval(fetchAccount, ACCOUNT_REFRESH_INTERVAL_MS);
+  setInterval(() => fetchEquity(currentEquityRange, { force: true }), REFRESH_INTERVAL_MS);
+  setInterval(fetchRuntimeSummary, REFRESH_INTERVAL_MS);
 });
