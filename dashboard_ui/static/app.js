@@ -1517,6 +1517,6 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchRuntimeSummary();
   setInterval(fetchState, REFRESH_INTERVAL_MS);
   setInterval(fetchAccount, ACCOUNT_REFRESH_INTERVAL_MS);
-  setInterval(() => fetchEquity(currentEquityRange, { force: true }), REFRESH_INTERVAL_MS);
+  setInterval(() => fetchEquity(currentEquityRange, { force: true }), 30000);
   setInterval(fetchRuntimeSummary, REFRESH_INTERVAL_MS);
 });
