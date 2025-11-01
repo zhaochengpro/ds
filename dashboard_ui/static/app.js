@@ -85,6 +85,7 @@ let equityChartState = {
   yMin: null,
   yMax: null,
 };
+let equityChartFingerprint = null;
 let dashboardSocket = null;
 let streamMessageQueue = [];
 let streamReconnectTimer = null;
@@ -200,11 +201,13 @@ function updateRuntimeSummary(summary) {
   if (!uptimeEl || !iterationsEl) {
     return;
   }
+  const prevSummary = previousRuntimeSummary || {};
   if (!summary || typeof summary !== 'object') {
     uptimeEl.textContent = '--';
     iterationsEl.textContent = '--';
     uptimeEl.removeAttribute('title');
     iterationsEl.removeAttribute('title');
+    previousRuntimeSummary = null;
     return;
   }
   const uptimeSeconds = toNumber(summary.uptime_seconds);
@@ -221,7 +224,13 @@ function updateRuntimeSummary(summary) {
   } else {
     iterationsEl.removeAttribute('title');
   }
-  previousRuntimeSummary = summary;
+  flashNumericChange(uptimeEl, uptimeSeconds, toNumber(prevSummary.uptime_seconds));
+  flashNumericChange(iterationsEl, iterations, toNumber(prevSummary.total_iterations));
+  previousRuntimeSummary = {
+    ...summary,
+    uptime_seconds: uptimeSeconds,
+    total_iterations: iterations,
+  };
 }
 
 function applyLastUpdated(timestamp) {
@@ -435,6 +444,18 @@ function handleEquityPointerLeave() {
     drawEquityChart();
   }
   hideEquityTooltip();
+}
+
+function animateChartRedraw() {
+  const chart = equityChart || ensureEquityChart();
+  if (!chart || !chart.canvas) {
+    return;
+  }
+  const { canvas } = chart;
+  canvas.classList.remove('chart-redraw');
+  // 强制重绘以重置动画
+  void canvas.offsetWidth;
+  canvas.classList.add('chart-redraw');
 }
 
 function resolveWebSocketUrl(path) {
@@ -895,6 +916,8 @@ function renderEquityChart() {
       emptyEl.style.display = 'flex';
     }
     const placeholder = buildPlaceholderSeries(currentEquityRange);
+    const fingerprint = `placeholder-${currentEquityRange}-${placeholder.points.length}`;
+    const hasChanged = fingerprint !== equityChartFingerprint;
     equityChartState = {
       points: placeholder.points.map((point) => ({
         timestamp: point.timestamp,
@@ -911,7 +934,11 @@ function renderEquityChart() {
       equityChart.pointerActive = false;
     }
     hideEquityTooltip();
+    equityChartFingerprint = fingerprint;
     drawEquityChart();
+    if (hasChanged) {
+      animateChartRedraw();
+    }
     return;
   }
 
@@ -954,7 +981,18 @@ function renderEquityChart() {
     yMin: suggestedMin,
     yMax: null,
   };
+  const firstPoint = normalizedPoints[0];
+  const lastPoint = normalizedPoints[normalizedPoints.length - 1];
+  const fingerprint = normalizedPoints.length
+    ? `${normalizedPoints.length}|${firstPoint.timestamp}|${lastPoint.timestamp}|${lastPoint.value}`
+    : `empty-${currentEquityRange}`;
+  const hasChanged = fingerprint !== equityChartFingerprint;
+  equityChartFingerprint = fingerprint;
   drawEquityChart();
+
+  if (hasChanged) {
+    animateChartRedraw();
+  }
 
   if (
     equityChart
