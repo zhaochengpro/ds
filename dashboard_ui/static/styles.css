@@ -263,7 +263,7 @@ body {
 
 .digit-slot {
   position: relative;
-  display: inline-flex;
+  display: inline-grid;
   overflow: hidden;
   height: var(--digit-step-height, 1.1em);
   min-width: 0.62em;
@@ -443,6 +443,7 @@ body {
   display: block;
   font-size: 1.4rem;
   font-weight: 600;
+  line-height: 1;
 }
 
 .metric-sub {
