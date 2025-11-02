@@ -178,9 +178,95 @@ function toDate(value) {
   return date;
 }
 
-function easeOutCubic(t) {
-  const clamped = Math.min(Math.max(t, 0), 1);
-  return 1 - (1 - clamped) ** 3;
+function extractDigits(text) {
+  return (text && typeof text === 'string' ? text.match(/\d/g) : null) || [];
+}
+
+function buildDigitFragments(startText, targetText) {
+  const startDigits = extractDigits(startText);
+  let startIndex = startDigits.length - 1;
+  const fragments = [];
+  for (let i = targetText.length - 1; i >= 0; i -= 1) {
+    const char = targetText[i];
+    if (/\d/.test(char)) {
+      const origin = startIndex >= 0 ? startDigits[startIndex] : '0';
+      fragments.unshift({
+        type: 'digit',
+        from: origin,
+        to: char,
+      });
+      startIndex -= 1;
+    } else {
+      fragments.unshift({
+        type: 'char',
+        value: char,
+      });
+    }
+  }
+  return fragments;
+}
+
+function createDigitSequence(fromDigit, toDigit, spinSteps = 4) {
+  const safeFrom = /\d/.test(fromDigit) ? fromDigit : '0';
+  const safeTo = /\d/.test(toDigit) ? toDigit : '0';
+  const fromNumber = Number.parseInt(safeFrom, 10);
+  const sequence = [Number.isNaN(fromNumber) ? safeTo : safeFrom];
+  let current = Number.isNaN(fromNumber) ? 0 : fromNumber;
+  const totalSteps = Math.max(spinSteps, 2);
+  for (let i = 0; i < totalSteps; i += 1) {
+    current = (current + 1) % 10;
+    sequence.push(String(current));
+  }
+  if (sequence[sequence.length - 1] !== safeTo) {
+    sequence.push(safeTo);
+  }
+  for (let i = sequence.length - 1; i > 0; i -= 1) {
+    if (sequence[i] === sequence[i - 1]) {
+      sequence.splice(i, 1);
+    }
+  }
+  sequence[0] = sequence[0] ?? safeFrom;
+  sequence[sequence.length - 1] = safeTo;
+  return sequence;
+}
+
+function renderDigitRoll(element, fragments, options) {
+  const dom = document.createDocumentFragment();
+  let digitIndex = 0;
+  fragments.forEach((item) => {
+    if (item.type === 'digit') {
+      const slot = document.createElement('span');
+      slot.className = 'digit-slot';
+      const sequence = createDigitSequence(item.from, item.to, options.spinSteps);
+      const reel = document.createElement('span');
+      reel.className = 'digit-reel';
+      const delay = digitIndex * options.digitDelay;
+      const shift = Math.max(sequence.length - 1, 0);
+      slot.style.setProperty('--digit-delay', `${delay}ms`);
+      slot.style.setProperty('--roll-duration', `${options.duration}ms`);
+      slot.style.setProperty('--reel-shift', `${shift}`);
+      reel.style.animationDelay = `${delay}ms`;
+      reel.style.animationDuration = `${options.duration}ms`;
+      reel.style.setProperty('--reel-shift', `${shift}`);
+      sequence.forEach((digit) => {
+        const digitSpan = document.createElement('span');
+        digitSpan.className = 'digit-value';
+        digitSpan.textContent = digit;
+        reel.appendChild(digitSpan);
+      });
+      slot.appendChild(reel);
+      dom.appendChild(slot);
+      digitIndex += 1;
+    } else {
+      const staticSpan = document.createElement('span');
+      staticSpan.className = 'digit-static';
+      staticSpan.textContent = item.value;
+      dom.appendChild(staticSpan);
+    }
+  });
+  element.innerHTML = '';
+  element.appendChild(dom);
+  return digitIndex;
 }
 
 function cancelNumberAnimation(element) {
@@ -192,79 +278,99 @@ function cancelNumberAnimation(element) {
   if (typeof active.frameId === 'number') {
     cancelAnimationFrame(active.frameId);
   }
+  if (typeof active.timeoutId === 'number') {
+    window.clearTimeout(active.timeoutId);
+  }
+  if (typeof active.cleanup === 'function') {
+    active.cleanup();
+  }
   numberAnimations.delete(element);
-  element.classList.remove('number-roll-up', 'number-roll-down', 'number-slot-active');
+  element.classList.remove('number-roller-active');
 }
 
 function animateNumericValue(element, value, formatter, options = {}) {
   if (!element) {
     return;
   }
-  element.classList.add('number-slot');
+  element.classList.add('number-roller');
   const fallback = options.fallback ?? '--';
   const duration = options.duration ?? 900;
+  const digitDelay = options.digitDelay ?? 70;
+  const spinSteps = options.spinSteps ?? 4;
   const target = toNumber(value);
 
   if (target === null) {
     cancelNumberAnimation(element);
     element.textContent = fallback;
     element.dataset.numberValue = '';
-    element.classList.remove('number-roll-up', 'number-roll-down', 'number-slot-active');
+    element.classList.remove('number-roller-active');
     return;
   }
 
   const currentStored = toNumber(element.dataset.numberValue);
   const start = Number.isFinite(currentStored) ? currentStored : target;
+  const formatFn = typeof formatter === 'function' ? formatter : (val) => String(val);
+  const startText = formatFn(start);
+  const targetText = formatFn(target);
 
-  if (!Number.isFinite(start) || Math.abs(start - target) < (options.epsilon ?? 1e-6)) {
+  if (startText === targetText) {
     cancelNumberAnimation(element);
-    element.textContent = formatter ? formatter(target) : String(target);
+    element.textContent = targetText;
     element.dataset.numberValue = String(target);
-    element.classList.remove('number-roll-up', 'number-roll-down', 'number-slot-active');
+    element.classList.remove('number-roller-active');
     return;
   }
 
   cancelNumberAnimation(element);
 
-  const direction = target >= start ? 'number-roll-up' : 'number-roll-down';
-  element.classList.remove('number-roll-up', 'number-roll-down');
-  void element.offsetWidth;
-  element.classList.add(direction);
-  element.classList.add('number-slot-active');
+  const fragments = buildDigitFragments(startText, targetText);
+  const hasDigits = fragments.some((item) => item.type === 'digit');
+  if (!hasDigits) {
+    element.textContent = targetText;
+    element.dataset.numberValue = String(target);
+    element.classList.remove('number-roller-active');
+    return;
+  }
+
+  const digitCount = renderDigitRoll(element, fragments, {
+    duration,
+    digitDelay,
+    spinSteps,
+  });
+  element.classList.add('number-roller-active');
+  element.dataset.numberValue = String(target);
+
+  const totalTime = duration + Math.max(0, digitCount - 1) * digitDelay + 120;
 
   const animation = {
     start,
     target,
-    startTime: performance.now(),
     duration,
     cancelled: false,
-    frameId: null,
+    timeoutId: null,
+    finalText: targetText,
+    cleaned: false,
+    cleanup() {
+      if (this.cleaned) {
+        return;
+      }
+      element.textContent = this.finalText;
+      element.classList.remove('number-roller-active');
+      this.cleaned = true;
+    },
   };
-  numberAnimations.set(element, animation);
 
-  const step = (timestamp) => {
+  animation.timeoutId = window.setTimeout(() => {
     if (animation.cancelled) {
       return;
     }
-    const elapsed = timestamp - animation.startTime;
-    const progress = Math.min(Math.max(elapsed / animation.duration, 0), 1);
-    const eased = easeOutCubic(progress);
-    const currentValue = animation.start + (animation.target - animation.start) * eased;
-    element.textContent = formatter ? formatter(currentValue) : String(currentValue);
+    animation.cleaned = true;
+    element.textContent = targetText;
+    element.classList.remove('number-roller-active');
+    numberAnimations.delete(element);
+  }, totalTime);
 
-    if (progress < 1) {
-      animation.frameId = requestAnimationFrame(step);
-    } else {
-      element.textContent = formatter ? formatter(animation.target) : String(animation.target);
-      element.dataset.numberValue = String(animation.target);
-      numberAnimations.delete(element);
-      window.setTimeout(() => {
-        element.classList.remove('number-roll-up', 'number-roll-down', 'number-slot-active');
-      }, 200);
-    }
-  };
-
-  animation.frameId = requestAnimationFrame(step);
+  numberAnimations.set(element, animation);
 }
 
 function updateLastUpdatedDisplay(date) {

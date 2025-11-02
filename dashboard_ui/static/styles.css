@@ -248,113 +248,106 @@ body {
   letter-spacing: 0.01em;
 }
 
-.number-slot {
-  position: relative;
+.number-roller {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  padding: 0 2px;
+  position: relative;
+  gap: 0;
+  font-variant-numeric: tabular-nums;
 }
 
-.number-slot::before,
-.number-slot::after {
+.number-roller-active {
+  font-variant-numeric: tabular-nums;
+}
+
+.digit-slot {
+  position: relative;
+  display: inline-flex;
+  overflow: hidden;
+  height: 1.1em;
+  min-width: 0.62em;
+  line-height: 1;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+}
+
+.digit-slot::before,
+.digit-slot::after {
   content: '';
   position: absolute;
   left: 0;
   right: 0;
-  height: 38%;
+  height: 28%;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 0.4s ease;
   z-index: 1;
+  transition: opacity 0.3s ease;
 }
 
-.number-slot::before {
+.digit-slot::before {
   top: 0;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.35), transparent 70%);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.35), transparent 75%);
 }
 
-.number-slot::after {
+.digit-slot::after {
   bottom: 0;
-  background: linear-gradient(0deg, rgba(0, 0, 0, 0.4), transparent 70%);
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.33), transparent 75%);
 }
 
-.number-slot-active::before,
-.number-slot-active::after {
-  opacity: 1;
+.number-roller-active .digit-slot::before,
+.number-roller-active .digit-slot::after {
+  opacity: 0.35;
 }
 
-.number-roll-up,
-.number-roll-down {
-  position: relative;
+.digit-reel {
   display: inline-flex;
-  animation-duration: 0.9s;
-  animation-timing-function: cubic-bezier(0.22, 0.76, 0.16, 1);
-  animation-fill-mode: both;
-  will-change: transform, filter, opacity;
-  transform-origin: center;
+  flex-direction: column;
+  align-items: center;
+  transform: translateY(0);
+  animation-name: digit-reel-spin;
+  animation-duration: var(--roll-duration, 900ms);
+  animation-delay: var(--digit-delay, 0ms);
+  animation-timing-function: cubic-bezier(0.18, 0.68, 0.12, 1);
+  animation-fill-mode: forwards;
+  will-change: transform;
   backface-visibility: hidden;
-  z-index: 2;
 }
 
-.number-roll-up {
-  animation-name: slot-roll-up;
+.digit-value,
+.digit-static {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.1em;
+  line-height: 1.05;
 }
 
-.number-roll-down {
-  animation-name: slot-roll-down;
+.digit-value {
+  min-width: 0.62em;
 }
 
-@keyframes slot-roll-up {
+.digit-static {
+  min-width: auto;
+  padding: 0 1px;
+}
+
+@keyframes digit-reel-spin {
   0% {
-    transform: perspective(720px) rotateX(-82deg) translateY(110%);
-    filter: blur(4px);
-    opacity: 0;
+    transform: translateY(0);
   }
-  35% {
-    transform: perspective(720px) rotateX(-32deg) translateY(-12%);
-    filter: blur(2px);
-    opacity: 1;
+  60% {
+    transform: translateY(calc(-1 * var(--reel-shift, 0) * 100%));
   }
-  55% {
-    transform: perspective(720px) rotateX(16deg) translateY(8%);
-    filter: blur(1px);
+  72% {
+    transform: translateY(calc((-1 * var(--reel-shift, 0) * 100%) + 8%));
   }
-  75% {
-    transform: perspective(720px) rotateX(-6deg) translateY(-2%);
-    filter: blur(0.5px);
+  86% {
+    transform: translateY(calc((-1 * var(--reel-shift, 0) * 100%) - 3%));
   }
   100% {
-    transform: perspective(720px) rotateX(0deg) translateY(0);
-    filter: blur(0);
-    opacity: 1;
-  }
-}
-
-@keyframes slot-roll-down {
-  0% {
-    transform: perspective(720px) rotateX(82deg) translateY(-110%);
-    filter: blur(4px);
-    opacity: 0;
-  }
-  35% {
-    transform: perspective(720px) rotateX(32deg) translateY(12%);
-    filter: blur(2px);
-    opacity: 1;
-  }
-  55% {
-    transform: perspective(720px) rotateX(-16deg) translateY(-8%);
-    filter: blur(1px);
-  }
-  75% {
-    transform: perspective(720px) rotateX(6deg) translateY(2%);
-    filter: blur(0.5px);
-  }
-  100% {
-    transform: perspective(720px) rotateX(0deg) translateY(0);
-    filter: blur(0);
-    opacity: 1;
+    transform: translateY(calc(-1 * var(--reel-shift, 0) * 100%));
   }
 }
 
