@@ -49,18 +49,47 @@ body {
 
 .status {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   font-size: 0.95rem;
   color: var(--muted);
 }
 
-.status-label {
-  color: #fff;
+.status-item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  white-space: nowrap;
 }
 
-.status-separator {
-  opacity: 0.4;
+.status-item + .status-item {
+  margin-left: 12px;
+  padding-left: 12px;
+}
+
+.status-item + .status-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.status-label {
+  color: #fff;
+  font-weight: 500;
+}
+
+.status-value {
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
 }
 
 .status-indicator {
@@ -720,7 +749,8 @@ tbody tr:last-child td {
 
 .signal-reason,
 .batch-signals li {
-  word-break: break-word;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 .signal-header {
@@ -921,26 +951,68 @@ td.flash-down {
   .secondary-grid {
     grid-template-columns: 1fr;
   }
+
+  .status {
+    gap: 10px 14px;
+  }
+
+  .status-item + .status-item {
+    margin-left: 0;
+    padding-left: 0;
+  }
+
+  .status-item + .status-item::before {
+    display: none;
+  }
 }
 
 @media (max-width: 768px) {
   .app-header {
     flex-direction: column;
     align-items: flex-start;
-    gap: 12px;
+    gap: 16px;
+    padding: 20px 20px 12px;
+  }
+
+  .app-main {
+    padding: 0 20px 56px;
+    gap: 24px;
+  }
+
+  .status {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    font-size: 0.875rem;
+    gap: 10px;
+  }
+
+  .status-item {
+    width: 100%;
+    justify-content: space-between;
+    padding: 0;
+  }
+
+  .status-item + .status-item {
+    margin-left: 0;
+    padding-left: 0;
+  }
+
+  .status-item + .status-item::before {
+    display: none;
   }
 
   .metrics-strip {
     grid-template-columns: 1fr;
   }
 
+  .card {
+    padding: 18px;
+  }
+
   .signal-footer {
     flex-direction: column;
     gap: 6px;
-  }
-
-  .table-container {
-    overflow-x: visible;
   }
 
   .primary-grid,
@@ -967,67 +1039,64 @@ td.flash-down {
     padding: 12px;
   }
 
+  .range-toggle {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 6px 8px;
+    font-size: 0.75rem;
+    border-radius: 12px;
+  }
+
+  .range-button {
+    flex: 1 1 calc(50% - 8px);
+    text-align: center;
+  }
+
   #positions-section .table-container {
-    border: none;
-    background: transparent;
-    box-shadow: none;
-    padding: 0;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+    padding: 0 0 12px;
+    overflow-x: auto;
   }
 
   #positions-table {
-    overflow: visible;
+    min-width: 640px;
     border-radius: 12px;
     backdrop-filter: none;
+    font-size: 0.85rem;
   }
 
   #positions-table th,
   #positions-table td {
-    white-space: normal;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 520px) {
+  .app-header {
+    padding: 18px 16px 12px;
+  }
+
+  .app-main {
+    padding: 0 16px 48px;
+  }
+
+  .status {
+    font-size: 0.82rem;
   }
 
   .range-toggle {
-    width: 100%;
-    justify-content: space-between;
-    padding: 4px 6px;
+    gap: 6px;
   }
 
   .range-button {
-    flex: 1;
-    text-align: center;
+    flex: 1 1 100%;
   }
 
-  table,
-  thead,
-  tbody,
-  th,
-  td,
-  tr {
-    display: block;
-    width: 100%;
-  }
-
-  thead {
-    display: none;
-  }
-
-  tr {
-    margin-bottom: 12px;
-    background: rgba(255, 255, 255, 0.02);
-    border-radius: 8px;
-    padding: 10px;
-  }
-
-  td {
-    border: none;
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 6px 0;
-  }
-
-  td::before {
-    content: attr(data-label);
-    color: var(--muted);
-    font-size: 0.8rem;
+  #positions-table {
+    min-width: 560px;
   }
 }

@@ -13,17 +13,22 @@
         <p>实时监控账户收益、持仓与 AI 策略表现</p>
       </div>
       <div class="status">
-        <span class="status-label">连接状态：</span>
-        <span id="connection-status" class="status-indicator status-pending">刷新中</span>
-        <span class="status-separator">|</span>
-        <span>最后更新：</span>
-        <span id="last-updated">--</span>
-        <span class="status-separator">|</span>
-        <span>运行时长：</span>
-        <span id="runtime-uptime">--</span>
-        <span class="status-separator">|</span>
-        <span>循环次数：</span>
-        <span id="runtime-iterations">--</span>
+        <div class="status-item">
+          <span class="status-label">连接状态：</span>
+          <span id="connection-status" class="status-indicator status-pending">刷新中</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">最后更新：</span>
+          <span id="last-updated" class="status-value">--</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">运行时长：</span>
+          <span id="runtime-uptime" class="status-value">--</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">循环次数：</span>
+          <span id="runtime-iterations" class="status-value">--</span>
+        </div>
       </div>
     </header>
 
