@@ -249,6 +249,7 @@ body {
 }
 
 .number-roller {
+  --digit-step-height: 1.1em;
   display: inline-flex;
   align-items: center;
   position: relative;
@@ -264,7 +265,7 @@ body {
   position: relative;
   display: inline-flex;
   overflow: hidden;
-  height: 1.1em;
+  height: var(--digit-step-height, 1.1em);
   min-width: 0.62em;
   line-height: 1;
   align-items: center;
@@ -320,8 +321,8 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 1.1em;
-  line-height: 1.05;
+  height: var(--digit-step-height, 1.1em);
+  line-height: var(--digit-step-height, 1.1em);
 }
 
 .digit-value {
@@ -338,16 +339,24 @@ body {
     transform: translateY(0);
   }
   60% {
-    transform: translateY(calc(-1 * var(--reel-shift, 0) * 100%));
+    transform: translateY(calc(-1 * var(--reel-shift, 0) * var(--digit-step-height, 1em)));
   }
   72% {
-    transform: translateY(calc((-1 * var(--reel-shift, 0) * 100%) + 8%));
+    transform: translateY(
+      calc(
+        (var(--digit-step-height, 1em) * -1 * var(--reel-shift, 0)) + (var(--digit-step-height, 1em) * 0.08)
+      )
+    );
   }
   86% {
-    transform: translateY(calc((-1 * var(--reel-shift, 0) * 100%) - 3%));
+    transform: translateY(
+      calc(
+        (var(--digit-step-height, 1em) * -1 * var(--reel-shift, 0)) - (var(--digit-step-height, 1em) * 0.03)
+      )
+    );
   }
   100% {
-    transform: translateY(calc(-1 * var(--reel-shift, 0) * 100%));
+    transform: translateY(calc(-1 * var(--reel-shift, 0) * var(--digit-step-height, 1em)));
   }
 }
 
