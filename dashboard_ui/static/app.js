@@ -193,21 +193,23 @@ function cancelNumberAnimation(element) {
     cancelAnimationFrame(active.frameId);
   }
   numberAnimations.delete(element);
+  element.classList.remove('number-roll-up', 'number-roll-down', 'number-slot-active');
 }
 
 function animateNumericValue(element, value, formatter, options = {}) {
   if (!element) {
     return;
   }
+  element.classList.add('number-slot');
   const fallback = options.fallback ?? '--';
-  const duration = options.duration ?? 720;
+  const duration = options.duration ?? 900;
   const target = toNumber(value);
 
   if (target === null) {
     cancelNumberAnimation(element);
     element.textContent = fallback;
     element.dataset.numberValue = '';
-    element.classList.remove('number-roll-up', 'number-roll-down');
+    element.classList.remove('number-roll-up', 'number-roll-down', 'number-slot-active');
     return;
   }
 
@@ -218,7 +220,7 @@ function animateNumericValue(element, value, formatter, options = {}) {
     cancelNumberAnimation(element);
     element.textContent = formatter ? formatter(target) : String(target);
     element.dataset.numberValue = String(target);
-    element.classList.remove('number-roll-up', 'number-roll-down');
+    element.classList.remove('number-roll-up', 'number-roll-down', 'number-slot-active');
     return;
   }
 
@@ -228,6 +230,7 @@ function animateNumericValue(element, value, formatter, options = {}) {
   element.classList.remove('number-roll-up', 'number-roll-down');
   void element.offsetWidth;
   element.classList.add(direction);
+  element.classList.add('number-slot-active');
 
   const animation = {
     start,
@@ -256,7 +259,7 @@ function animateNumericValue(element, value, formatter, options = {}) {
       element.dataset.numberValue = String(animation.target);
       numberAnimations.delete(element);
       window.setTimeout(() => {
-        element.classList.remove('number-roll-up', 'number-roll-down');
+        element.classList.remove('number-roll-up', 'number-roll-down', 'number-slot-active');
       }, 200);
     }
   };

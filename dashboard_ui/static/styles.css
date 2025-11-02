@@ -248,47 +248,112 @@ body {
   letter-spacing: 0.01em;
 }
 
+.number-slot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0 2px;
+}
+
+.number-slot::before,
+.number-slot::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 38%;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  z-index: 1;
+}
+
+.number-slot::before {
+  top: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.35), transparent 70%);
+}
+
+.number-slot::after {
+  bottom: 0;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.4), transparent 70%);
+}
+
+.number-slot-active::before,
+.number-slot-active::after {
+  opacity: 1;
+}
+
 .number-roll-up,
 .number-roll-down {
-  display: inline-block;
-  animation-duration: 0.7s;
-  animation-timing-function: cubic-bezier(0.17, 0.88, 0.32, 1.08);
+  position: relative;
+  display: inline-flex;
+  animation-duration: 0.9s;
+  animation-timing-function: cubic-bezier(0.22, 0.76, 0.16, 1);
   animation-fill-mode: both;
-  will-change: transform, opacity;
+  will-change: transform, filter, opacity;
+  transform-origin: center;
+  backface-visibility: hidden;
+  z-index: 2;
 }
 
 .number-roll-up {
-  animation-name: number-roll-up;
+  animation-name: slot-roll-up;
 }
 
 .number-roll-down {
-  animation-name: number-roll-down;
+  animation-name: slot-roll-down;
 }
 
-@keyframes number-roll-up {
+@keyframes slot-roll-up {
   0% {
-    transform: translateY(60%);
-    opacity: 0.25;
+    transform: perspective(720px) rotateX(-82deg) translateY(110%);
+    filter: blur(4px);
+    opacity: 0;
   }
-  45% {
-    opacity: 0.9;
+  35% {
+    transform: perspective(720px) rotateX(-32deg) translateY(-12%);
+    filter: blur(2px);
+    opacity: 1;
+  }
+  55% {
+    transform: perspective(720px) rotateX(16deg) translateY(8%);
+    filter: blur(1px);
+  }
+  75% {
+    transform: perspective(720px) rotateX(-6deg) translateY(-2%);
+    filter: blur(0.5px);
   }
   100% {
-    transform: translateY(0);
+    transform: perspective(720px) rotateX(0deg) translateY(0);
+    filter: blur(0);
     opacity: 1;
   }
 }
 
-@keyframes number-roll-down {
+@keyframes slot-roll-down {
   0% {
-    transform: translateY(-60%);
-    opacity: 0.25;
+    transform: perspective(720px) rotateX(82deg) translateY(-110%);
+    filter: blur(4px);
+    opacity: 0;
   }
-  45% {
-    opacity: 0.9;
+  35% {
+    transform: perspective(720px) rotateX(32deg) translateY(12%);
+    filter: blur(2px);
+    opacity: 1;
+  }
+  55% {
+    transform: perspective(720px) rotateX(-16deg) translateY(-8%);
+    filter: blur(1px);
+  }
+  75% {
+    transform: perspective(720px) rotateX(6deg) translateY(2%);
+    filter: blur(0.5px);
   }
   100% {
-    transform: translateY(0);
+    transform: perspective(720px) rotateX(0deg) translateY(0);
+    filter: blur(0);
     opacity: 1;
   }
 }
