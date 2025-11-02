@@ -169,6 +169,9 @@ class DashboardStreamSession:
                     await self._send_json({"type": "heartbeat", "timestamp": utc_now_iso()})
                     next_heartbeat = now + self.HEARTBEAT_INTERVAL
 
+            except asyncio.CancelledError:
+                self.active = False
+                break
             except WebSocketDisconnect:
                 self.active = False
                 break
@@ -185,6 +188,9 @@ class DashboardStreamSession:
         while self.active:
             try:
                 data = await self.websocket.receive_json()
+            except asyncio.CancelledError:
+                self.active = False
+                break
             except WebSocketDisconnect:
                 self.active = False
                 break
