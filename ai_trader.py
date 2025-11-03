@@ -812,7 +812,7 @@ def execute_trade(signal_data, price_data_obj):
         risk_usd = float(signal.get('risk_usd', 0.0))
         invalidation = signal.get('invalidation_condition', '')
 
-        if current_position and (action != 'HOLD' or action != 'WAIT'):
+        if current_position and (action == 'OPEN_LONG' or action == 'OPEN_SHORT'):
             current_side = current_position['side']
             if action == 'OPEN_LONG':
                 new_side = 'long'
@@ -826,7 +826,7 @@ def execute_trade(signal_data, price_data_obj):
                     coin_logger.info(
                         f"信号忽略 | 低信心反转 | 当前:{current_side} -> 建议:{new_side}"
                     )
-                    # continue
+                    continue
 
                 history = signal_history.get(coin, [])
                 if len(history) >= 2:
