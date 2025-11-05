@@ -174,7 +174,7 @@ def get_current_positions(
                 continue
 
             try:
-                orders = exchange.fetch_open_orders(symbol, params={"ordType": "oco"})
+                orders = exchange.fetch_open_orders(symbol, params={"ordType": "conditional"})
             except ccxt.RateLimitExceeded:
                 time.sleep(0.2)
                 orders = []
