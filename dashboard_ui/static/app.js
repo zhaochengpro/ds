@@ -1483,30 +1483,66 @@ function updatePositionsTable(positions, prevPositions = {}) {
 
     const columns = [
       { label: '合约', key: 'symbol', display: item.symbol || '--', className: 'cell-symbol' },
-      { label: '数量', key: 'quantity', display: formatNumber(item.quantity), numeric: true },
-      { label: '入场价', key: 'entry_price', display: formatNumber(item.entry_price, 2), numeric: true },
-      { label: '当前价', key: 'current_price', display: formatNumber(item.current_price, 2), numeric: true },
+      {
+        label: '数量',
+        key: 'quantity',
+        value: item.quantity,
+        numeric: true,
+        formatter: (val) => formatNumber(val),
+      },
+      {
+        label: '入场价',
+        key: 'entry_price',
+        value: item.entry_price,
+        numeric: true,
+        formatter: (val) => formatNumber(val, 2),
+      },
+      {
+        label: '当前价',
+        key: 'current_price',
+        value: item.current_price,
+        numeric: true,
+        formatter: (val) => formatNumber(val, 2),
+      },
       {
         label: '未实现盈亏',
         key: 'unrealized_pnl',
-        display: formatCurrency(item.unrealized_pnl),
+        value: item.unrealized_pnl,
         numeric: true,
         positiveNegative: true,
         className: 'cell-pnl',
+        formatter: (val) => formatCurrency(val),
       },
       {
         label: '杠杆',
         key: 'leverage',
-        display: `${formatNumber(item.leverage, 2)}x`,
+        value: item.leverage,
         numeric: true,
+        formatter: (val) => {
+          const num = toNumber(val);
+          if (num === null) {
+            return '--';
+          }
+          return `${formatNumber(num, 2)}x`;
+        },
       },
-      { label: '风险 (USD)', key: 'risk_usd', display: formatCurrency(item.risk_usd), numeric: true },
+      {
+        label: '风险 (USD)',
+        key: 'risk_usd',
+        value: item.risk_usd,
+        numeric: true,
+        formatter: (val) => formatCurrency(val),
+      },
     ];
 
     columns.forEach((column) => {
       const td = document.createElement('td');
       td.dataset.label = column.label;
-      td.textContent = column.display;
+      if (column.numeric) {
+        td.textContent = '--';
+      } else {
+        td.textContent = column.display ?? '--';
+      }
 
       if (column.numeric) {
         td.classList.add('cell-numeric');
@@ -1517,7 +1553,7 @@ function updatePositionsTable(positions, prevPositions = {}) {
       }
 
       if (column.positiveNegative) {
-        const numericValue = toNumber(item[column.key]);
+        const numericValue = toNumber(column.value);
         if (numericValue === null) {
           td.classList.add('positive');
         } else {
@@ -1526,8 +1562,15 @@ function updatePositionsTable(positions, prevPositions = {}) {
       }
 
       if (column.numeric) {
+        const currentValue = column.value;
         const previousValue = previous ? previous[column.key] : undefined;
-        flashNumericChange(td, item[column.key], previousValue);
+        const prevNumeric = toNumber(previousValue);
+        if (prevNumeric !== null) {
+          td.dataset.numberValue = String(prevNumeric);
+        }
+        const formatter = typeof column.formatter === 'function' ? column.formatter : (val) => formatNumber(val);
+        animateNumericValue(td, currentValue, formatter, { fallback: '--' });
+        flashNumericChange(td, currentValue, previousValue);
       }
 
       tr.appendChild(td);
