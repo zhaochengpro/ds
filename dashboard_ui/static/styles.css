@@ -256,7 +256,7 @@ body {
 
 .number-roller {
   --digit-step-height: 1.1em;
-  display: inline-flex;
+  /* display: inline-flex; */
   align-items: center;
   position: relative;
   gap: 0;
@@ -781,7 +781,7 @@ tbody tr:last-child td {
 }
 
 #positions-table .cell-numeric {
-  text-align: right;
+  /* text-align: right; */
   font-variant-numeric: tabular-nums;
 }
 
