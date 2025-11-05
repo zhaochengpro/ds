@@ -124,13 +124,13 @@ def format_position(position_obj: Dict[str, Dict[str, Any]]) -> str:
         lines.append(f"    未实现盈亏：${pnl:,.2f}")
         lines.append(f"    杠杆：{leverage}x")
         
-        if tp :
+        if position.get("tp") :
             tp = safe_float(position.get("tp"))
             lines.append(f"    止盈价：{tp:,.4f}")
         else:
             lines.append(f"    止盈价：未设置")
             
-        if sl :
+        if position.get("sl") :
             sl = safe_float(position.get("sl"))
             lines.append(f"    止损价：{sl:,.4f}")
         else:
