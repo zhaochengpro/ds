@@ -1876,6 +1876,15 @@ function updateStrategyBatches(batches, prevBatches = []) {
       card.className = 'batch-card';
 
       const signals = Array.isArray(batch.signals) ? batch.signals : [];
+
+      function escapeHTML(str) {
+        return str
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "小于")
+          .replace(/>/g, "大于")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
       const rows = signals
         .slice(0, 5)
         .map((signal) => {
@@ -1887,7 +1896,7 @@ function updateStrategyBatches(batches, prevBatches = []) {
               <span class="${actionClass}">${action}</span>
               <span class="batch-notional">规模：${formatCurrency(signal.usdt_amount)}</span>
               <span>杠杆：${formatNumber(signal.leverage, 2)}x</span>
-              <span>理由：${signal.reason || signal.justification || '—'}</span>
+              <span>理由：${escapeHTML(signal.reason || signal.justification || '—')}</span>
             </li>
           `;
         })

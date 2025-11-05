@@ -578,6 +578,7 @@ def analyze_with_deepseek(price_data):
                 3. 确保生成的JSON输出格式正确且内容完整
                 4. 提供真实的信心评分（切勿夸大判断力度）
                 5. 严格执行止损计划（切勿提前放弃止损位）
+                6. 让盈利奔跑，快速止损"远比"提高胜率"更重要。
 
                 谨记：您正在真实市场中使用真实资金交易。每个决策都将产生后果。请系统化交易、严格管控风险，让概率在时间长河中为您创造优势。
 
@@ -891,7 +892,7 @@ def execute_trade(signal_data, price_data_obj):
                 coin_logger.warning("信号数量为0，跳过执行")
                 continue
 
-        if action in ('OPEN_LONG', 'OPEN_SHORT') and confidence_label == 'LOW':
+        if action in ('OPEN_LONG', 'OPEN_SHORT', 'CLOSE_LONG', 'CLOSE_SHORT') and confidence_label == 'LOW':
             coin_logger.warning("低信心信号，跳过执行")
             continue
 
@@ -943,14 +944,10 @@ def execute_trade(signal_data, price_data_obj):
                     'buy',
                     op_amount,
                     params={'posSide': posSide, 'attachAlgoOrds': [{
-                        'tpTriggerPx': str(tp),
-                        'tpOrdPx': str(tp),
                         'slTriggerPx': str(sl),
                         'slOrdPx': str(sl)
                     }]}
                 )
-                coin_logger.info("执行完成 | 已提交订单")
-
             elif action == 'OPEN_SHORT':
                 coin_logger.info("操作 | 开空仓")
                 exchange.create_market_order(
@@ -958,13 +955,10 @@ def execute_trade(signal_data, price_data_obj):
                     'sell',
                     op_amount,
                     params={'posSide': posSide, 'attachAlgoOrds': [{
-                        'tpTriggerPx': str(tp),
-                        'tpOrdPx': str(tp),
                         'slTriggerPx': str(sl),
                         'slOrdPx': str(sl)
                     }]}
                 )
-                coin_logger.info("执行完成 | 已提交订单")
             elif action == 'CLOSE_LONG':
                 coin_logger.info("操作 | 平多仓")
                 exchange.create_market_order(
@@ -973,7 +967,6 @@ def execute_trade(signal_data, price_data_obj):
                     amount=algo_amount,
                     params={'reduceOnly': True, 'posSide': 'long', 'tdMode': 'cross'}
                 )
-                coin_logger.info("执行完成 | 已提交订单")
             elif action == 'CLOSE_SHORT':
                 coin_logger.info("操作 | 平空仓")
                 exchange.create_market_order(
@@ -982,7 +975,6 @@ def execute_trade(signal_data, price_data_obj):
                     amount=algo_amount,
                     params={'reduceOnly': True, 'posSide': 'short', 'tdMode': 'cross'}
                 )
-                coin_logger.info("执行完成 | 已提交订单")
             elif action == 'HOLD' or action == 'WAIT':
                 coin_logger.info("操作 | HOLD")
             time.sleep(2)
