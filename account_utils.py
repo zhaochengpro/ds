@@ -125,10 +125,15 @@ def format_position(position_obj: Dict[str, Dict[str, Any]]) -> str:
         lines.append(f"    杠杆：{leverage}x")
         tp = safe_float(position.get("tp"))
         sl = safe_float(position.get("sl"))
-        if tp:
+        if tp != '' and tp is not None:
             lines.append(f"    止盈价：{tp:,.4f}")
-        if sl:
+        else:
+            lines.append(f"    止盈价：未设置")
+            
+        if sl != '' and sl is not None:
             lines.append(f"    止损价：{sl:,.4f}")
+        else:
+            lines.append(f"    止损价：未设置")
         lines.append("")
 
     return "\n".join(lines)
@@ -184,8 +189,8 @@ def get_current_positions(
 
             open_order = orders[0] if orders else {}
             order_info = open_order.get("info", {}) if isinstance(open_order, dict) else {}
-            sl = safe_float(order_info.get("slOrdPx"))
-            tp = safe_float(order_info.get("tpOrdPx"))
+            sl = safe_float(order_info.get("slTriggerPx"))
+            tp = safe_float(order_info.get("tpTriggerPx"))
             algo_id = open_order.get("id") if isinstance(open_order, dict) else None
             algo_amount = safe_float(open_order.get("amount")) if isinstance(open_order, dict) else 0.0
 
@@ -222,8 +227,8 @@ def get_current_positions(
                 "notional_usd": notional_usd,
                 "risk_usd": risk_usd,
                 "symbol": pos.get("symbol"),
-                "tp": tp,
-                "sl": sl,
+                "tp": None if tp == '' else tp,
+                "sl": None if sl == '' else sl,
                 "algoId": algo_id,
                 "algoAmount": algo_amount,
             }

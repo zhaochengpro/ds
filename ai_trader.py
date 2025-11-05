@@ -238,6 +238,7 @@ def analyze_with_deepseek(price_data):
     
     positions_snapshot = get_current_positions(exchange, logger, price_data.keys()) or {}
     position_prompt = format_position(positions_snapshot)
+    print("position_prompt", position_prompt)
     positions_payload = build_position_payload(positions_snapshot, signal_history)
     positions_payload_json = json.dumps(positions_payload, ensure_ascii=False, indent=4)
 
@@ -944,6 +945,7 @@ def execute_trade(signal_data, price_data_obj):
                     'buy',
                     op_amount,
                     params={'posSide': posSide, 'attachAlgoOrds': [{
+                        'ordType': 'conditional',
                         'slTriggerPx': str(sl),
                         'slOrdPx': str(sl)
                     }]}
@@ -955,6 +957,7 @@ def execute_trade(signal_data, price_data_obj):
                     'sell',
                     op_amount,
                     params={'posSide': posSide, 'attachAlgoOrds': [{
+                        'ordType': 'conditional',
                         'slTriggerPx': str(sl),
                         'slOrdPx': str(sl)
                     }]}
