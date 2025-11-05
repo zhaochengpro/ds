@@ -55,6 +55,18 @@ def _timestamp_to_iso(value: Any) -> str:
     return _utc_now().isoformat()
 
 
+def _as_utc_datetime(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str):
+        parsed = parse_timestamp(value)
+        if parsed is not None:
+            return parsed.astimezone(timezone.utc)
+    return None
+
+
 class DatabaseClient:
     """Thin wrapper around PyMySQL for persisting trading telemetry."""
 
@@ -309,10 +321,59 @@ class DatabaseClient:
                         total_iterations = GREATEST(total_iterations, %s)
                     WHERE run_id = %s
                     """,
-                    (finished_db, uptime_seconds, iteration + 1, run_id),
+                    (finished_db, uptime_seconds, iteration, run_id),
                 )
         except Exception:
             LOGGER.exception("Failed to record runtime metrics for run %s", run_id)
+
+    def _collect_iteration_stats(self, cursor) -> Dict[str, Any]:
+        cursor.execute(
+            """
+            SELECT
+                MIN(iteration) AS min_iteration,
+                MAX(iteration) AS max_iteration,
+                COUNT(*) AS iteration_count,
+                MIN(loop_started_at) AS first_loop_ts,
+                MAX(loop_finished_at) AS last_loop_ts
+            FROM runtime_metrics
+            """
+        )
+        row = cursor.fetchone() or {}
+        return {
+            "min_iteration": row.get("min_iteration"),
+            "max_iteration": row.get("max_iteration"),
+            "iteration_count": row.get("iteration_count"),
+            "first_loop_ts": row.get("first_loop_ts"),
+            "last_loop_ts": row.get("last_loop_ts"),
+        }
+
+    def _fetch_first_snapshot_ts(self, cursor) -> Optional[datetime]:
+        cursor.execute(
+            """
+            SELECT snapshot_ts
+            FROM equity_snapshots
+            ORDER BY snapshot_ts ASC
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return row.get("snapshot_ts")
+
+    def _fetch_last_snapshot_ts(self, cursor) -> Optional[datetime]:
+        cursor.execute(
+            """
+            SELECT snapshot_ts
+            FROM equity_snapshots
+            ORDER BY snapshot_ts DESC
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return row.get("snapshot_ts")
 
     def record_equity_snapshot(
         self,
@@ -486,47 +547,47 @@ class DatabaseClient:
     ) -> Optional[Union[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]]:
         if not self.enabled:
             return None
-        with self._lock:
-            target_run = run_id or self._current_run_id
         range_key = (range_name or "").lower() or None
         if range_key and range_key not in EQUITY_RANGE_CONFIG:
             range_key = None
-        window = max(
-            (cfg["window"] for cfg in EQUITY_RANGE_CONFIG.values()),
-            default=timedelta(days=365),
+        finite_windows = [
+            cfg["window"]
+            for cfg in EQUITY_RANGE_CONFIG.values()
+            if cfg.get("window") is not None
+        ]
+        max_window = max(finite_windows) if finite_windows else timedelta(days=365)
+        include_unbounded = any(
+            cfg.get("window") is None for cfg in EQUITY_RANGE_CONFIG.values()
         )
-        if range_key:
+        if range_key is not None:
             window = EQUITY_RANGE_CONFIG[range_key]["window"]
+        else:
+            window = None if include_unbounded else max_window
         now = _utc_now()
-        cutoff = now - window
+        cutoff = None if window is None else now - window
         try:
             with self._connection() as conn:
                 cursor = conn.cursor()
-                if not target_run:
-                    cursor.execute(
-                        "SELECT run_id FROM bot_runs ORDER BY started_at DESC LIMIT 1"
-                    )
-                    latest = cursor.fetchone()
-                    if not latest:
-                        return None
-                    target_run = latest.get("run_id")
-                if not target_run:
-                    return None
+                conditions = []
+                params: List[Any] = []
+                if cutoff is not None:
+                    conditions.append("snapshot_ts >= %s")
+                    params.append(_to_db_timestamp(cutoff))
+                conditions.append("snapshot_ts <= %s")
+                params.append(_to_db_timestamp(now))
+                where_clause = " AND ".join(conditions)
                 cursor.execute(
-                    """
+                    f"""
                     SELECT snapshot_ts, account_value
                     FROM equity_snapshots
-                    WHERE snapshot_ts >= %s AND snapshot_ts <= %s
+                    WHERE {where_clause}
                     ORDER BY snapshot_ts ASC
                     """,
-                    (
-                        _to_db_timestamp(cutoff),
-                        _to_db_timestamp(now),
-                    ),
+                    tuple(params),
                 )
                 rows = cursor.fetchall()
         except Exception:
-            LOGGER.exception("Failed to fetch equity snapshots for run %s", target_run)
+            LOGGER.exception("Failed to fetch equity snapshots")
             return None
         if not rows:
             return None
@@ -548,61 +609,126 @@ class DatabaseClient:
             return build_equity_series(history, range_key)
         return build_equity_timeframes(history)
 
+    def fetch_initial_equity_value(
+        self,
+        run_id: Optional[str] = None,
+    ) -> Optional[float]:
+        if not self.enabled:
+            return None
+        try:
+            with self._connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT account_value
+                    FROM equity_snapshots
+                    ORDER BY snapshot_ts ASC
+                    LIMIT 1
+                    """
+                )
+                row = cursor.fetchone()
+                if row and row.get("account_value") is not None:
+                    value = _safe_float(row.get("account_value"))
+                    if value is not None:
+                        return value
+        except Exception:
+            LOGGER.exception("Failed to fetch initial equity value")
+        return None
+
     def fetch_runtime_summary(
         self,
         run_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         if not self.enabled:
             return None
-        with self._lock:
-            target_run = run_id or self._current_run_id
         try:
             with self._connection() as conn:
                 cursor = conn.cursor()
-                if not target_run:
-                    cursor.execute(
-                        "SELECT run_id FROM bot_runs ORDER BY started_at DESC LIMIT 1"
-                    )
-                    latest = cursor.fetchone()
-                    if not latest:
-                        return None
-                    target_run = latest.get("run_id")
-                if not target_run:
-                    return None
                 cursor.execute(
                     """
-                    SELECT run_id, started_at, last_heartbeat, uptime_seconds,
-                           total_iterations, symbols, timeframe, status
+                    SELECT
+                        MIN(started_at) AS min_started,
+                        MAX(last_heartbeat) AS max_heartbeat,
+                        SUM(uptime_seconds) AS sum_uptime,
+                        SUM(total_iterations) AS sum_iterations
                     FROM bot_runs
-                    WHERE run_id = %s
-                    """,
-                    (target_run,),
+                    """
                 )
-                run_row = cursor.fetchone()
-                if not run_row:
+                aggregate_row = cursor.fetchone() or {}
+                if not any(aggregate_row.values()):
                     return None
+
+                iteration_stats = self._collect_iteration_stats(cursor)
+                first_equity_raw = self._fetch_first_snapshot_ts(cursor)
+                last_equity_raw = self._fetch_last_snapshot_ts(cursor)
+
                 cursor.execute(
                     """
                     SELECT iteration, loop_started_at, loop_finished_at,
                            duration_ms, minutes_elapsed
                     FROM runtime_metrics
-                    WHERE run_id = %s
-                    ORDER BY iteration DESC
+                    ORDER BY loop_finished_at DESC
                     LIMIT 10
-                    """,
-                    (target_run,),
+                    """
                 )
                 iteration_rows = cursor.fetchall()
+
+                cursor.execute(
+                    """
+                    SELECT symbols
+                    FROM bot_runs
+                    WHERE symbols IS NOT NULL
+                    """
+                )
+                symbol_rows = cursor.fetchall()
         except Exception:
-            LOGGER.exception("Failed to fetch runtime summary for run %s", target_run)
+            LOGGER.exception("Failed to fetch runtime summary (aggregate)")
             return None
 
-        uptime_seconds = run_row.get("uptime_seconds")
-        if uptime_seconds is None:
-            started_at = run_row.get("started_at")
-            last_heartbeat = run_row.get("last_heartbeat")
-            if isinstance(started_at, datetime) and isinstance(last_heartbeat, datetime):
-                uptime_seconds = int((last_heartbeat - started_at).total_seconds())
+        iteration_count = iteration_stats.get("iteration_count") if iteration_stats else None
+        if (iteration_count is None or iteration_count == 0) and aggregate_row.get("sum_iterations") is not None:
+            iteration_count = aggregate_row.get("sum_iterations")
+        loops_total = int(iteration_count or 0)
+
+        started_at_value = aggregate_row.get("min_started")
+        last_heartbeat_value = aggregate_row.get("max_heartbeat")
+
+        baseline_candidates: List[datetime] = []
+        last_candidates: List[datetime] = []
+
+        if first_equity_raw is not None:
+            equity_dt = _as_utc_datetime(first_equity_raw)
+            if equity_dt is not None:
+                baseline_candidates.append(equity_dt)
+
+        if iteration_stats:
+            first_loop_dt = _as_utc_datetime(iteration_stats.get("first_loop_ts"))
+            last_loop_dt = _as_utc_datetime(iteration_stats.get("last_loop_ts"))
+            if first_loop_dt is not None:
+                baseline_candidates.append(first_loop_dt)
+            if last_loop_dt is not None:
+                last_candidates.append(last_loop_dt)
+
+        if last_equity_raw is not None:
+            equity_last_dt = _as_utc_datetime(last_equity_raw)
+            if equity_last_dt is not None:
+                last_candidates.append(equity_last_dt)
+
+        baseline_candidates.append(_as_utc_datetime(started_at_value))
+        last_candidates.append(_as_utc_datetime(last_heartbeat_value))
+
+        baseline_candidates = [dt for dt in baseline_candidates if dt is not None]
+        last_candidates = [dt for dt in last_candidates if dt is not None]
+
+        baseline_dt = min(baseline_candidates) if baseline_candidates else None
+        last_dt = max(last_candidates) if last_candidates else None
+
+        uptime_seconds = aggregate_row.get("sum_uptime")
+        if baseline_dt is not None and last_dt is not None:
+            uptime_seconds = max(int((last_dt - baseline_dt).total_seconds()), 0)
+        elif uptime_seconds is None:
+            uptime_seconds = 0
+
         iteration_items: List[Dict[str, Any]] = []
         for row in iteration_rows or []:
             iteration_items.append(
@@ -614,23 +740,87 @@ class DatabaseClient:
                     "minutes_elapsed": row.get("minutes_elapsed"),
                 }
             )
-        symbols_value = run_row.get("symbols")
-        if isinstance(symbols_value, str):
-            symbols_list = [item for item in symbols_value.split(",") if item]
-        elif isinstance(symbols_value, (list, tuple)):
-            symbols_list = list(symbols_value)
-        else:
-            symbols_list = []
+
+        symbols_set = set()
+        for row in symbol_rows or []:
+            value = row.get("symbols")
+            if not value:
+                continue
+            if isinstance(value, str):
+                for token in value.split(","):
+                    token = token.strip()
+                    if token:
+                        symbols_set.add(token)
+            elif isinstance(value, (list, tuple)):
+                for token in value:
+                    if not token:
+                        continue
+                    token_str = str(token).strip()
+                    if token_str:
+                        symbols_set.add(token_str)
+
+        symbols_list = sorted(symbols_set)
+
+        started_at_iso = _timestamp_to_iso(baseline_dt) if baseline_dt is not None else _timestamp_to_iso(started_at_value)
+        last_heartbeat_iso = _timestamp_to_iso(last_heartbeat_value)
         return {
-            "run_id": run_row.get("run_id"),
-            "status": run_row.get("status") or "unknown",
-            "started_at": _timestamp_to_iso(run_row.get("started_at")),
-            "last_heartbeat": _timestamp_to_iso(run_row.get("last_heartbeat")),
+            "run_id": None,
+            "status": "aggregate",
+            "started_at": started_at_iso,
+            "last_heartbeat": last_heartbeat_iso,
             "uptime_seconds": uptime_seconds if uptime_seconds is not None else 0,
-            "total_iterations": run_row.get("total_iterations") or 0,
+            "total_iterations": loops_total,
             "symbols": symbols_list,
-            "timeframe": run_row.get("timeframe"),
+            "timeframe": None,
             "recent_iterations": iteration_items,
+        }
+
+    def fetch_first_snapshot_timestamp(
+        self,
+        run_id: Optional[str] = None,
+    ) -> Optional[datetime]:
+        if not self.enabled:
+            return None
+        try:
+            with self._connection() as conn:
+                cursor = conn.cursor()
+                raw_ts = self._fetch_first_snapshot_ts(cursor)
+        except Exception:
+            LOGGER.exception("Failed to fetch first snapshot timestamp")
+            return None
+        if raw_ts is None:
+            return None
+        return _as_utc_datetime(raw_ts)
+
+    def fetch_iteration_stats(
+        self,
+        run_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not self.enabled:
+            return None
+        try:
+            with self._connection() as conn:
+                cursor = conn.cursor()
+                stats = self._collect_iteration_stats(cursor)
+        except Exception:
+            LOGGER.exception("Failed to fetch iteration stats")
+            return None
+
+        if not stats:
+            return {
+                "min_iteration": None,
+                "max_iteration": None,
+                "iteration_count": 0,
+                "first_loop_ts": None,
+                "last_loop_ts": None,
+            }
+
+        return {
+            "min_iteration": stats.get("min_iteration"),
+            "max_iteration": stats.get("max_iteration"),
+            "iteration_count": int(stats.get("iteration_count") or 0),
+            "first_loop_ts": _as_utc_datetime(stats.get("first_loop_ts")),
+            "last_loop_ts": _as_utc_datetime(stats.get("last_loop_ts")),
         }
 
     def mark_run_completed(self, run_id: Optional[str]) -> None:

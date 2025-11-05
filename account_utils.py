@@ -7,10 +7,14 @@ from typing import Dict, Iterable, List, Optional, Tuple, Any
 import numpy as np
 import ccxt
 
+from db import database
+
 
 performance_tracker: Dict[str, Any] = {
     "initial_equity": None,
+    "initial_source": None,
     "equity_history": [],
+    "last_seed_attempt": 0.0,
 }
 
 
@@ -28,8 +32,25 @@ def update_performance_metrics(account_value: Optional[float]) -> Tuple[float, f
     if account_value is None:
         return 0.0, 0.0
 
+    now = time.time()
+    needs_db_seed = (
+        state.get("initial_equity") is None
+        or state.get("initial_source") != "db"
+    )
+    last_attempt = state.get("last_seed_attempt", 0.0)
+    if needs_db_seed and (now - last_attempt >= 5.0):
+        state["last_seed_attempt"] = now
+        try:
+            db_initial = database.fetch_initial_equity_value()
+        except Exception:
+            db_initial = None
+        if db_initial is not None:
+            state["initial_equity"] = float(db_initial)
+            state["initial_source"] = "db"
+
     if state["initial_equity"] is None and account_value > 0:
         state["initial_equity"] = account_value
+        state["initial_source"] = state.get("initial_source") or "fallback"
 
     state["equity_history"].append({"timestamp": time.time(), "value": account_value})
     if len(state["equity_history"]) > 500:

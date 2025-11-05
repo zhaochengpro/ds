@@ -75,6 +75,7 @@ EQUITY_RANGE_CONFIG: Dict[str, Dict[str, Any]] = {
     "week": {"window": timedelta(days=7), "interval": timedelta(hours=1)},
     "month": {"window": timedelta(days=30), "interval": timedelta(days=1)},
     "year": {"window": timedelta(days=365), "interval": timedelta(days=7)},
+    "all": {"window": None, "interval": timedelta(days=7)},
 }
 
 
@@ -112,8 +113,14 @@ def build_equity_series(history: List[Dict[str, Any]], range_name: str) -> List[
 
     now = datetime.now(timezone.utc)
     end = now - HISTORY_END_OFFSET
-    cutoff = end - config["window"]
+    window = config.get("window")
     interval = config["interval"]
+    if window is None:
+        cutoff = prepared[0]["datetime"]
+    else:
+        cutoff = end - window
+    if cutoff > end:
+        cutoff = end
     return _sample_history(prepared, cutoff=cutoff, end=end, min_interval=interval)
 
 
@@ -124,15 +131,22 @@ def build_equity_timeframes(history: List[Dict[str, Any]]) -> Dict[str, List[Dic
 
     now = datetime.now(timezone.utc)
     end = now - HISTORY_END_OFFSET
-    return {
-        key: _sample_history(
+    result: Dict[str, List[Dict[str, Any]]] = {}
+    for key, config in EQUITY_RANGE_CONFIG.items():
+        window = config.get("window")
+        if window is None:
+            cutoff = prepared[0]["datetime"]
+        else:
+            cutoff = end - window
+        if cutoff > end:
+            cutoff = end
+        result[key] = _sample_history(
             prepared,
-            cutoff=end - config["window"],
+            cutoff=cutoff,
             end=end,
             min_interval=config["interval"],
         )
-        for key, config in EQUITY_RANGE_CONFIG.items()
-    }
+    return result
 
 
 __all__ = [

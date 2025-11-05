@@ -53,6 +53,8 @@ start_time = datetime.now(UTC)
 minutes_elapsed = 0
 RUN_ID = None
 iteration_counter = 0
+start_time_seeded = False
+initial_equity_value = None
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -146,6 +148,7 @@ TRADE_CONFIG = {
 price_history = []
 signal_history = {}
 position = None
+last_positions_fingerprint = None
 
 
 def setup_exchange(leverage, symbol, posSide):
@@ -175,7 +178,7 @@ def setup_exchange(leverage, symbol, posSide):
 
 def capture_account_snapshot(balance=None):
     """Fetch and persist the latest account snapshot."""
-    global RUN_ID
+    global RUN_ID, start_time, start_time_seeded, initial_equity_value
 
     try:
         balance_data = balance if balance is not None else exchange.fetch_balance()
@@ -203,6 +206,27 @@ def capture_account_snapshot(balance=None):
     except Exception:
         logger.debug("数据库写入失败：账户快照", exc_info=True)
 
+    if not start_time_seeded:
+        baseline_ts = None
+        try:
+            baseline_ts = database.fetch_first_snapshot_timestamp(RUN_ID)
+        except Exception:
+            baseline_ts = None
+        if baseline_ts is not None:
+            start_time = baseline_ts
+            start_time_seeded = True
+
+    if initial_equity_value is None:
+        baseline_equity = None
+        try:
+            baseline_equity = database.fetch_initial_equity_value(RUN_ID)
+        except Exception:
+            baseline_equity = None
+        if baseline_equity is not None:
+            initial_equity_value = float(baseline_equity)
+        elif account_value:
+            initial_equity_value = float(account_value)
+
     return account_value, available_cash, return_pct, sharpe_ratio, snapshot_ts
 def analyze_with_deepseek(price_data):
     """使用DeepSeek分析市场并生成交易信号（增强版）"""
@@ -227,6 +251,10 @@ def analyze_with_deepseek(price_data):
         account_value, available_cash, return_pct, sharpe_ratio = compute_account_metrics(balance or {})
 
     usdt_balance = available_cash
+    initial_funds = initial_equity_value if initial_equity_value is not None else account_value
+    if initial_funds is None:
+        initial_funds = 0.0
+    initial_funds_display = f"{float(initial_funds):,.2f}"
 
     try:
         update_positions_snapshot(positions_payload)
@@ -291,7 +319,7 @@ def analyze_with_deepseek(price_data):
 
                 - **交易所**：OKX（中心化交易所）
                 - **资产池**：{','.join(coin_list)}（永续合约）
-                - **初始资金**：{usdt_balance}美元
+                - **初始资金**：{initial_funds_display}美元
                 - **交易时段**：全天候连续交易
                 - **决策频率**：每2-3分钟一次（中低频交易）
                 - **杠杆范围**：1倍至20倍（根据信心审慎使用）
@@ -1007,11 +1035,58 @@ def get_coins_ohlcv_enhanced(coin_list):
     return price_data
 
 
-def account_snapshot_job():
+def sync_positions_snapshot(snapshot_ts=None):
+    """Fetch positions from the exchange and update dashboard state."""
+    global last_positions_fingerprint
+
+    timestamp = snapshot_ts or datetime.now(UTC)
     try:
-        capture_account_snapshot()
+        positions_snapshot = get_current_positions(
+            exchange,
+            logger,
+            coin_list or [],
+            retries=3,
+        ) or {}
+    except Exception:
+        logger.debug("获取持仓失败", exc_info=True)
+        return
+
+    positions_payload = build_position_payload(positions_snapshot, signal_history)
+
+    try:
+        update_positions_snapshot(positions_payload)
+    except Exception as state_error:
+        logger.debug(f"Dashboard state update failed | positions sync | {state_error}")
+
+    fingerprint = None
+    try:
+        fingerprint = json.dumps(positions_payload or [], sort_keys=True, default=str)
+    except Exception:
+        fingerprint = None
+
+    if fingerprint is not None and fingerprint == last_positions_fingerprint:
+        return
+
+    if RUN_ID and positions_payload is not None:
+        try:
+            database.record_positions_snapshot(RUN_ID, timestamp, positions_payload)
+            last_positions_fingerprint = fingerprint
+        except Exception:
+            logger.debug("数据库写入失败：持仓快照", exc_info=True)
+
+
+def account_snapshot_job():
+    snapshot_ts = None
+    try:
+        snapshot = capture_account_snapshot()
+        if snapshot is not None:
+            _, _, _, _, snapshot_ts = snapshot
     except Exception:
         logger.debug("账户快照任务执行失败", exc_info=True)
+    try:
+        sync_positions_snapshot(snapshot_ts)
+    except Exception:
+        logger.debug("持仓同步任务执行失败", exc_info=True)
 
 
 def run_account_snapshot_loop(stop_event: threading.Event) -> None:
@@ -1087,7 +1162,7 @@ def get_fact_amount(symbol, notional, leverage, price):
 
 def main():
     """主函数"""
-    global RUN_ID, start_time, minutes_elapsed, iteration_counter
+    global RUN_ID, start_time, minutes_elapsed, iteration_counter, start_time_seeded, initial_equity_value
 
     exchange.httpsProxy = os.getenv('https_proxy')
     database.initialize()
@@ -1097,9 +1172,32 @@ def main():
     start_time = datetime.now(UTC)
     minutes_elapsed = 0
     iteration_counter = 0
+    start_time_seeded = False
+    initial_equity_value = None
     RUN_ID = database.register_run(symbols=coin_list or [], timeframe=TRADE_CONFIG.get('timeframe'))
     if RUN_ID:
         logger.info(f"当前运行记录ID：{RUN_ID}")
+
+    try:
+        iteration_stats = database.fetch_iteration_stats(RUN_ID)
+    except Exception:
+        iteration_stats = None
+    if iteration_stats and iteration_stats.get("iteration_count"):
+        iteration_counter = int(iteration_stats.get("iteration_count") or 0)
+
+    try:
+        baseline_ts = database.fetch_first_snapshot_timestamp(RUN_ID)
+    except Exception:
+        baseline_ts = None
+    if baseline_ts is not None:
+        start_time = baseline_ts
+        start_time_seeded = True
+    try:
+        baseline_equity = database.fetch_initial_equity_value(RUN_ID)
+    except Exception:
+        baseline_equity = None
+    if baseline_equity is not None:
+        initial_equity_value = float(baseline_equity)
 
     logger.info(f"OKX自动交易机器人启动成功！")
     logger.info("融合技术指标策略 + OKX实盘接口")

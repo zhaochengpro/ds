@@ -2,7 +2,7 @@ const DASHBOARD_STREAM_PATH = '/ws/dashboard';
 const STREAM_RECONNECT_BASE_MS = 1500;
 const STREAM_RECONNECT_MAX_MS = 15000;
 const STREAM_QUEUE_LIMIT = 32;
-const EQUITY_RANGES = ['day', 'week', 'month', 'year'];
+const EQUITY_RANGES = ['day', 'week', 'month', 'year', 'all'];
 const EQUITY_DEFAULT_RANGE = 'day';
 const EQUITY_COLORS = {
   day: {
@@ -25,6 +25,11 @@ const EQUITY_COLORS = {
     fill: 'rgba(255, 159, 67, 0.22)',
     solid: '#ff9f43',
   },
+  all: {
+    line: 'rgba(255, 99, 132, 0.9)',
+    fill: 'rgba(255, 99, 132, 0.2)',
+    solid: '#ff6384',
+  },
 };
 
 const PLACEHOLDER_EQUITY_BASELINE = 10000;
@@ -33,6 +38,7 @@ const PLACEHOLDER_RANGE_CONFIG = {
   week: { segments: 7, stepMs: 24 * 60 * 60 * 1000 },
   month: { segments: 6, stepMs: 5 * 24 * 60 * 60 * 1000 },
   year: { segments: 6, stepMs: 60 * 24 * 60 * 60 * 1000 },
+  all: { segments: 6, stepMs: 120 * 24 * 60 * 60 * 1000 },
 };
 
 function adjustAlpha(color, alpha) {
@@ -77,6 +83,7 @@ let equitySeries = {
   week: [],
   month: [],
   year: [],
+  all: [],
 };
 let currentEquityRange = EQUITY_DEFAULT_RANGE;
 let equityChart = null;
