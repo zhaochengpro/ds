@@ -416,8 +416,8 @@ def analyze_with_deepseek(price_data):
                 6. **signal** (字符串)：交易信号
                 - "OPEN_LONG"：开多单
                 - "OPEN_SHORT"：开空单
-                - "CLOSE_LONG"：关闭多单
-                - "CLOSE_SHORT"：关闭空单
+                - "CLOSE_LONG"：持仓方向为多单(long)则关闭多单
+                - "CLOSE_SHORT"：持仓方向为空单(short)则关闭空单
                 - "HOLD"：当已经有仓位是保持持仓
                 - "WAIT"：当不满足开仓条件时等待
 
