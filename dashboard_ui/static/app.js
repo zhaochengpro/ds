@@ -1939,7 +1939,7 @@ function updateStrategyBatches(batches, prevBatches = []) {
               <span class="${actionClass}">${action}</span>
               <span class="batch-notional">规模：${formatCurrency(signal.usdt_amount)}</span>
               <span class="batch-notional">杠杆：${formatNumber(signal.leverage, 2)}x</span>
-              <span class="batch-notional">信心：${signal.confidence}</span>
+              <span class="batch-notional">信心：${signal.confidence}(${signal.confidence_score})</span>
               <span class="batch-notional">止盈：${signal.take_profit}</span>
               <span class="batch-notional">止损：${signal.stop_loss}</span>
               <span>理由：${escapeHTML(signal.reason || signal.justification || '—')}</span>
