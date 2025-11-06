@@ -297,6 +297,8 @@ def analyze_with_deepseek(price_data):
     根据上述数据，请以要求的JSON格式提供您的交易决策。
     """
     
+    print('prompt', prompt)
+    
 
     try:
         response = deepseek_client.chat.completions.create(
