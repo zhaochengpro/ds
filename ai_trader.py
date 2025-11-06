@@ -543,7 +543,7 @@ def analyze_with_deepseek(price_data):
 
                 ## 常见陷阱需规避
 
-                - ⚠️ **过度交易**：频繁交易将通过手续费蚕食本金
+                - ⚠️ **过度交易**：频繁交易将通过手续费蚕食本金(避免频繁)
                 - ⚠️ **报复性交易**：切勿在亏损后加仓试图"挽回损失"
                 - ⚠️ **分析瘫痪**：勿等待完美交易机会，世上本无完美布局
                 - ⚠️ **忽视相关性**：比特币常引领山寨币走势，请优先关注比特币
@@ -665,9 +665,9 @@ def analyze_with_deepseek(price_data):
 
             confidence_score = float(signal.get('confidence') or 0.0)
             signal['confidence_score'] = confidence_score
-            if confidence_score > 0.6:
+            if confidence_score >= 0.7:
                 confidence_label = 'HIGH'
-            elif confidence_score >= 0.4:
+            elif confidence_score >= 0.5:
                 confidence_label = 'MEDIUM'
             else:
                 confidence_label = 'LOW'
