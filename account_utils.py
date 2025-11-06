@@ -115,7 +115,7 @@ def format_position(position_obj: Dict[str, Dict[str, Any]]) -> str:
         leverage = safe_float(position.get("leverage"))
         notional = safe_float(position.get("notional_usd"))
         
-        print('format postion:', position)
+        # print('format postion:', position)
 
         lines.append(f"    **{coin}持仓情况：**")
         lines.append(f"    方向：{'多单' if position.get('side') == 'long' else '空单'}")
