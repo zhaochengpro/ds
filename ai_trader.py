@@ -292,7 +292,7 @@ def analyze_with_deepseek(price_data):
     - **当前账户价值：** ${account_value:,.2f}
 
     **当前持仓与业绩：**
-    {positions_payload_json}
+    {position_prompt}
 
     根据上述数据，请以要求的JSON格式提供您的交易决策。
     """
