@@ -664,7 +664,7 @@ def analyze_with_deepseek(price_data):
 
             confidence_score = float(signal.get('confidence') or 0.0)
             signal['confidence_score'] = confidence_score
-            if confidence_score >= 0.7:
+            if confidence_score > 0.6:
                 confidence_label = 'HIGH'
             elif confidence_score >= 0.4:
                 confidence_label = 'MEDIUM'
