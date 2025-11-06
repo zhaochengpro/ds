@@ -893,7 +893,7 @@ def execute_trade(signal_data, price_data_obj):
                 coin_logger.warning("信号数量为0，跳过执行")
                 continue
 
-        if action in ('OPEN_LONG', 'OPEN_SHORT', 'CLOSE_LONG', 'CLOSE_SHORT') and confidence_label == 'LOW':
+        if action in ('OPEN_LONG', 'OPEN_SHORT', 'CLOSE_LONG', 'CLOSE_SHORT') and (confidence_label == 'LOW' or confidence_label == 'MEDIUM'):
             coin_logger.warning("低信心信号，跳过执行")
             continue
 
@@ -935,7 +935,7 @@ def execute_trade(signal_data, price_data_obj):
                     f"当前持仓 | 无持仓 | 计划止盈 {tp:.2f} | 计划止损 {sl:.2f}"
                 )
 
-            if posSide and action != 'HOLD':
+            if posSide and action in ('OPEN_LONG', 'OPEN_SHORT'):
                 setup_exchange(leverage, f"{coin}/USDT:USDT", posSide)
 
             if action == 'OPEN_LONG':
