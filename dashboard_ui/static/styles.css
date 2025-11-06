@@ -139,8 +139,17 @@ body {
 
 }
 .panel-batches {
-  overflow: scroll;
+  overflow-y: scroll;
   max-height: 384px;
+}
+
+.panel-batches::-webkit-scrollbar {
+  height: 6px;
+}
+
+.panel-batches::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
 }
 
 .card h2 {
