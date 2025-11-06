@@ -292,12 +292,11 @@ def analyze_with_deepseek(price_data):
     - **当前账户价值：** ${account_value:,.2f}
 
     **当前持仓与业绩：**
-{positions_payload_json}
+    {positions_payload_json}
 
     根据上述数据，请以要求的JSON格式提供您的交易决策。
     """
     
-    # print('prompt', prompt)
 
     try:
         response = deepseek_client.chat.completions.create(
@@ -324,6 +323,8 @@ def analyze_with_deepseek(price_data):
                 - **交易时段**：全天候连续交易
                 - **决策频率**：每2-3分钟一次（中低频交易）
                 - **杠杆范围**：1倍至20倍（根据信心审慎使用）
+                - long 代表多头/多单
+                - short 代表空头/空单
 
                 ## 交易机制
 
@@ -429,7 +430,7 @@ def analyze_with_deepseek(price_data):
                 
                 {{
                     [{'|'.join(['"' + coin + '"' for coin in coin_list])}: {{
-                        "signal": "OPEN_LONG" | "OPEN_SHORT" | "CLOSE_LONG" | "CLOSE_SHORT" | "HOLD" | "WAIT",
+                        "signal": "OPEN_LONG" 或 "OPEN_SHORT" 或 "CLOSE_LONG" 或 "CLOSE_SHORT" 或 "HOLD" 或 "WAIT",
                         "coin": {'|'.join(['"' + coin + '"' for coin in coin_list])},
                         "quantity": <float>,
                         "leverage": <integer 1-20>,
