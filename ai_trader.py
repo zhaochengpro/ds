@@ -403,11 +403,12 @@ def analyze_with_deepseek(price_data):
                 - 示例："BTC跌破10万美元"、"RSI跌破30"、"资金费率转负"
                 - 必须客观可验证
 
-                4. **confidence** (浮点数, 0-1): 对本次交易操作的信心程度
+                4. **confidence(信心)** (浮点数, 0-1): 每次操作的信心程度
                 - 0.0-0.3：低信心（避免交易或采用最小仓位）
                 - 0.3-0.6：中等信心（采用标准仓位）
                 - 0.6-0.8：高信心（可扩大仓位规模）
                 - 0.8-1.0：极高信心（谨慎操作，警惕过度自信）
+                - 示例："如果选择平仓某一头寸，这里表示平仓这一头寸的信心而不是持有该头寸的信心。是针对的每一次操作进行信心评估"
 
                 5. **risk_usd** (浮点型)：风险金额（入场价至止损位的距离）
                 - 计算公式：|入场价 - 止损价| × 仓位规模 × 杠杆倍数
@@ -427,7 +428,7 @@ def analyze_with_deepseek(price_data):
                 请用以下JSON格式回复，必须包含以下字段：
                 
                 {{
-                    {'|'.join(['"' + coin + '"' for coin in coin_list])}: {{
+                    [{'|'.join(['"' + coin + '"' for coin in coin_list])}: {{
                         "signal": "OPEN_LONG" | "OPEN_SHORT" | "CLOSE_LONG" | "CLOSE_SHORT" | "HOLD" | "WAIT",
                         "coin": {'|'.join(['"' + coin + '"' for coin in coin_list])},
                         "quantity": <float>,
@@ -438,7 +439,7 @@ def analyze_with_deepseek(price_data):
                         "confidence": <float 0-1>,
                         "risk_usd": <float>,
                         "justification": "<string>（中文回答）"
-                    }}
+                    }}, ...]
                 }}
 
                 ## 输出验证规则
