@@ -118,7 +118,7 @@ def format_position(position_obj: Dict[str, Dict[str, Any]]) -> str:
         print('format postion:', position)
 
         lines.append(f"    **{coin}持仓情况：**")
-        lines.append(f"    方向：{position.get('side')}")
+        lines.append(f"    方向：{'多单' if position.get('side') == 'long' else '空单'}")
         lines.append(f"    合约张数：{position.get('size')}")
         lines.append(f"    合约名义：${notional:,.2f}")
         lines.append(f"    入场价：{entry_price:,.4f}")
