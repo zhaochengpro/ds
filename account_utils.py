@@ -127,6 +127,7 @@ def format_position(position_obj: Dict[str, Dict[str, Any]]) -> str:
                 open_time_ms = None
 
         duration_text, duration_minutes = format_time_diff(open_time_ms)
+        print(duration_minutes, MIN_HOLD_MINUTES)
         meets_minimum = (
             duration_minutes is not None and duration_minutes >= MIN_HOLD_MINUTES
         )
