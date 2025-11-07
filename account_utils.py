@@ -205,15 +205,15 @@ def format_time_diff(ms_timestamp: Optional[int]) -> Tuple[str, Optional[float]]
 
     # 天
     days = diff_ms // ms_per_day
-    diff_ms %= ms_per_day
+    # diff_ms %= ms_per_day
 
     # 小时
     hours = diff_ms // ms_per_hour
-    diff_ms %= ms_per_hour
+    # diff_ms %= ms_per_hour
 
     # 分钟
     minutes = diff_ms // ms_per_min
-    diff_ms %= ms_per_min
+    # diff_ms %= ms_per_min
 
     # 秒
     seconds = diff_ms // ms_per_sec
