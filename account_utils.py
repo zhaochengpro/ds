@@ -114,9 +114,11 @@ def format_position(position_obj: Dict[str, Dict[str, Any]]) -> str:
         pnl = safe_float(position.get("unrealized_pnl"))
         leverage = safe_float(position.get("leverage"))
         notional = safe_float(position.get("notional_usd"))
+        
+        pos_time_format = format_time_diff(position.get('open_time'))
 
         lines.append(f"    **{coin}持仓情况：**")
-        lines.append(f"    开仓时间戳(毫秒)：{position.get('open_time')}")
+        lines.append(f"    开仓时间：{pos_time_format}")
         lines.append(f"    持仓方向：{'多头头寸' if position.get('side') == 'long' else '空头头寸'} ({position.get('side')})")
         lines.append(f"    合约张数：{position.get('size')}")
         lines.append(f"    合约名义：${notional:,.2f}")
@@ -140,6 +142,40 @@ def format_position(position_obj: Dict[str, Dict[str, Any]]) -> str:
 
     return "\n".join(lines)
 
+
+def format_time_diff(ms_timestamp: int) -> str:
+    """
+    计算从传入的毫秒时间戳到当前时间的时间差，并格式化为“xxx天xxx小时xxx分钟xxx秒”。
+    :param ms_timestamp: 目标时间的毫秒级时间戳
+    :return: 格式化字符串，如 "1天2小时3分钟4秒"
+    """
+    # 当前时间戳（毫秒）
+    now_ms = int(time.time() * 1000)
+    # 差值（毫秒），如果是未来时间会是负数，这里取绝对值
+    diff_ms = abs(now_ms - ms_timestamp)
+
+    # 各时间单位的毫秒数
+    ms_per_sec = 1000
+    ms_per_min = ms_per_sec * 60
+    ms_per_hour = ms_per_min * 60
+    ms_per_day = ms_per_hour * 24
+
+    # 天
+    days = diff_ms // ms_per_day
+    diff_ms %= ms_per_day
+
+    # 小时
+    hours = diff_ms // ms_per_hour
+    diff_ms %= ms_per_hour
+
+    # 分钟
+    minutes = diff_ms // ms_per_min
+    diff_ms %= ms_per_min
+
+    # 秒
+    seconds = diff_ms // ms_per_sec
+
+    return f"{days}天{hours}小时{minutes}分钟{seconds}秒"
 
 def get_current_positions(
     exchange: ccxt.Exchange,
