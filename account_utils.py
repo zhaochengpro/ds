@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import time
 import logging
+from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional, Tuple, Any
 
 import numpy as np
 import ccxt
 
 from db import database
+
+MIN_HOLD_MINUTES = 60.0
 
 
 performance_tracker: Dict[str, Any] = {
@@ -114,11 +117,44 @@ def format_position(position_obj: Dict[str, Dict[str, Any]]) -> str:
         pnl = safe_float(position.get("unrealized_pnl"))
         leverage = safe_float(position.get("leverage"))
         notional = safe_float(position.get("notional_usd"))
-        
-        pos_time_format = format_time_diff(position.get('open_time'))
+
+        open_time_raw = position.get("open_time")
+        open_time_ms: Optional[int] = None
+        if open_time_raw not in (None, ""):
+            try:
+                open_time_ms = int(float(open_time_raw))
+            except (TypeError, ValueError):
+                open_time_ms = None
+
+        duration_text, duration_minutes = format_time_diff(open_time_ms)
+        meets_minimum = (
+            duration_minutes is not None and duration_minutes >= MIN_HOLD_MINUTES
+        )
+
+        if open_time_ms:
+            open_time_local = (
+                datetime.fromtimestamp(open_time_ms / 1000.0, tz=timezone.utc)
+                .astimezone()
+                .strftime("%Y-%m-%d %H:%M:%S %Z")
+            )
+        else:
+            open_time_local = "未知"
 
         lines.append(f"    **{coin}持仓情况：**")
-        lines.append(f"    开仓时间：{pos_time_format}")
+        lines.append(f"    开仓时间（本地）：{open_time_local}")
+        lines.append(
+            f"    开仓时间戳（毫秒）：{open_time_ms if open_time_ms is not None else '未知'}"
+        )
+        if duration_minutes is not None:
+            lines.append(
+                f"    持仓时长：{duration_text}（约{duration_minutes:.2f}分钟）"
+            )
+            status = "已满足" if meets_minimum else "未达标"
+            lines.append(
+                f"    最低持仓要求：{MIN_HOLD_MINUTES:.0f}分钟（{status}）"
+            )
+        else:
+            lines.append("    持仓时长：数据缺失")
         lines.append(f"    持仓方向：{'多头头寸' if position.get('side') == 'long' else '空头头寸'} ({position.get('side')})")
         lines.append(f"    合约张数：{position.get('size')}")
         lines.append(f"    合约名义：${notional:,.2f}")
@@ -143,16 +179,22 @@ def format_position(position_obj: Dict[str, Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def format_time_diff(ms_timestamp: int) -> str:
+def format_time_diff(ms_timestamp: Optional[int]) -> Tuple[str, Optional[float]]:
     """
     计算从传入的毫秒时间戳到当前时间的时间差，并格式化为“xxx天xxx小时xxx分钟xxx秒”。
     :param ms_timestamp: 目标时间的毫秒级时间戳
     :return: 格式化字符串，如 "1天2小时3分钟4秒"
     """
-    # 当前时间戳（毫秒）
+    if ms_timestamp in (None, ""):
+        return "未知", None
+
+    try:
+        target_ms = int(ms_timestamp)
+    except (TypeError, ValueError):
+        return "未知", None
+
     now_ms = int(time.time() * 1000)
-    # 差值（毫秒），如果是未来时间会是负数，这里取绝对值
-    diff_ms = abs(now_ms - ms_timestamp)
+    diff_ms = max(0, now_ms - target_ms)
 
     # 各时间单位的毫秒数
     ms_per_sec = 1000
@@ -175,7 +217,8 @@ def format_time_diff(ms_timestamp: int) -> str:
     # 秒
     seconds = diff_ms // ms_per_sec
 
-    return f"{days}天{hours}小时{minutes}分钟{seconds}秒"
+    total_minutes = diff_ms / float(ms_per_min) if ms_per_min else 0.0
+    return f"{days}天{hours}小时{minutes}分钟{seconds}秒", round(total_minutes, 2)
 
 def get_current_positions(
     exchange: ccxt.Exchange,
@@ -231,7 +274,18 @@ def get_current_positions(
             tp = safe_float(order_info.get("tpTriggerPx"))
             algo_id = open_order.get("id") if isinstance(open_order, dict) else None
             algo_amount = safe_float(open_order.get("amount")) if isinstance(open_order, dict) else 0.0
-            timestamp = open_order.get('timestamp')
+            timestamp_source = (
+                pos.get("timestamp")
+                or (pos.get("info", {}) or {}).get("cTime")
+                or (open_order.get('timestamp') if isinstance(open_order, dict) else None)
+            )
+            if timestamp_source in (None, ""):
+                normalized_timestamp = None
+            else:
+                try:
+                    normalized_timestamp = int(float(timestamp_source))
+                except (TypeError, ValueError):
+                    normalized_timestamp = None
 
             contract_size = safe_float(
                 pos.get("contractSize"),
@@ -265,7 +319,7 @@ def get_current_positions(
                 "leverage": leverage,
                 "notional_usd": notional_usd,
                 "risk_usd": risk_usd,
-                "open_time": timestamp,
+                "open_time": normalized_timestamp,
                 "symbol": pos.get("symbol"),
                 "tp": None if tp == '' else tp,
                 "sl": None if sl == '' else sl,
@@ -308,6 +362,7 @@ def build_position_payload(
         stop_loss = safe_float(position.get("sl"))
         risk_usd = safe_float(position.get("risk_usd"))
         notional_usd = safe_float(position.get("notional_usd"))
+        duration_text, hold_minutes = format_time_diff(position.get("open_time"))
 
         payload.append(
             {
@@ -325,6 +380,9 @@ def build_position_payload(
                 "confidence": confidence_score,
                 "risk_usd": risk_usd,
                 "notional_usd": notional_usd,
+                "open_time": position.get("open_time"),
+                "held_minutes": hold_minutes,
+                "hold_duration_text": duration_text,
             }
         )
 
