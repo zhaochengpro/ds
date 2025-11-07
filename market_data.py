@@ -304,17 +304,17 @@ def get_funding_rate(symbol: str) -> float:
 def get_market_data(symbol: str) -> Data:
     symbol = normalize_symbol(symbol)
 
-    klines_3m = get_klines(symbol, "3m", 40)
+    klines_1h = get_klines(symbol, "1h", 40)
     klines_4h = get_klines(symbol, "4h", 60)
 
-    current_price = klines_3m[-1].close if klines_3m else 0.0
-    current_ema20 = calculate_ema(klines_3m, 20)
-    current_macd = calculate_macd(klines_3m)
-    current_rsi7 = calculate_rsi(klines_3m, 7)
+    current_price = klines_1h[-1].close if klines_1h else 0.0
+    current_ema20 = calculate_ema(klines_1h, 20)
+    current_macd = calculate_macd(klines_1h)
+    current_rsi7 = calculate_rsi(klines_1h, 7)
 
     price_change_1h = 0.0
-    if len(klines_3m) >= 21:
-        price_1h_ago = klines_3m[-21].close
+    if len(klines_1h) >= 21:
+        price_1h_ago = klines_1h[-21].close
         if price_1h_ago:
             price_change_1h = ((current_price - price_1h_ago) / price_1h_ago) * 100.0
 
@@ -327,7 +327,7 @@ def get_market_data(symbol: str) -> Data:
     oi_data = get_open_interest(symbol)
     funding_rate = get_funding_rate(symbol)
 
-    intraday_series = calculate_intraday_series(klines_3m) if klines_3m else None
+    intraday_series = calculate_intraday_series(klines_1h) if klines_1h else None
     longer_term_context = calculate_longer_term_data(klines_4h) if klines_4h else None
 
     return Data(
@@ -365,7 +365,7 @@ def format_market_data(data: Data) -> str:
 
     if data.intraday_series:
         series = data.intraday_series
-        lines.append("    **日内系列（3分钟间隔，最旧→最新）：**\n")
+        lines.append("    **日内系列（1小时间隔，最旧→最新）：**\n")
 
         if series.mid_prices:
             lines.append(f"    中价：{format_float_slice(series.mid_prices)}\n")
