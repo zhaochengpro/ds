@@ -1024,7 +1024,7 @@ def execute_trade(signal_data, price_data_obj):
             elif action == 'HOLD' or action == 'WAIT':
                 coin_logger.info("操作 | HOLD")
                 if current_position:
-                    if (tp != 0 and f"{pos_tp:.2f}" != f"{tp:.2f}") or (sl != 0 and f"{pos_sl:.2f}" != f"{sl:.2f}"):
+                    if (sl != 0 and f"{pos_sl:.2f}" != f"{sl:.2f}"):
                         exchange.private_post_trade_cancel_algos([{
                             "instId": f"{coin}-USDT-SWAP",
                             "algoId": current_position['algoId']
