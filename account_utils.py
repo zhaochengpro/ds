@@ -114,8 +114,6 @@ def format_position(position_obj: Dict[str, Dict[str, Any]]) -> str:
         pnl = safe_float(position.get("unrealized_pnl"))
         leverage = safe_float(position.get("leverage"))
         notional = safe_float(position.get("notional_usd"))
-        
-        # print('format postion:', position)
 
         lines.append(f"    **{coin}持仓情况：**")
         lines.append(f"    持仓方向：{'多头头寸' if position.get('side') == 'long' else '空头头寸'} ({position.get('side')})")
@@ -154,6 +152,7 @@ def get_current_positions(
     for attempt in range(retries):
         try:
             positions = exchange.fetch_positions(symbols=None, params={"instType": "SWAP"})
+            print("positions", positions)
         except ccxt.RateLimitExceeded:
             wait_time = min(2**attempt, 5)
             logger.warning(f"获取持仓命中限频，等待{wait_time}秒后重试...")
