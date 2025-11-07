@@ -116,6 +116,7 @@ def format_position(position_obj: Dict[str, Dict[str, Any]]) -> str:
         notional = safe_float(position.get("notional_usd"))
 
         lines.append(f"    **{coin}持仓情况：**")
+        lines.append(f"    开仓时间戳(毫秒)：{position.get('open_time')}")
         lines.append(f"    持仓方向：{'多头头寸' if position.get('side') == 'long' else '空头头寸'} ({position.get('side')})")
         lines.append(f"    合约张数：{position.get('size')}")
         lines.append(f"    合约名义：${notional:,.2f}")
@@ -152,7 +153,7 @@ def get_current_positions(
     for attempt in range(retries):
         try:
             positions = exchange.fetch_positions(symbols=None, params={"instType": "SWAP"})
-            # print("positions", )
+            print("positions", positions)
         except ccxt.RateLimitExceeded:
             wait_time = min(2**attempt, 5)
             logger.warning(f"获取持仓命中限频，等待{wait_time}秒后重试...")
@@ -194,6 +195,7 @@ def get_current_positions(
             tp = safe_float(order_info.get("tpTriggerPx"))
             algo_id = open_order.get("id") if isinstance(open_order, dict) else None
             algo_amount = safe_float(open_order.get("amount")) if isinstance(open_order, dict) else 0.0
+            timestamp = open_order.get('timestamp')
 
             contract_size = safe_float(
                 pos.get("contractSize"),
@@ -227,6 +229,7 @@ def get_current_positions(
                 "leverage": leverage,
                 "notional_usd": notional_usd,
                 "risk_usd": risk_usd,
+                "open_time": timestamp,
                 "symbol": pos.get("symbol"),
                 "tp": None if tp == '' else tp,
                 "sl": None if sl == '' else sl,

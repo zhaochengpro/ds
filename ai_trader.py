@@ -6,7 +6,7 @@ from openai import OpenAI
 import ccxt
 import pandas as pd
 import uvicorn
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timezone
 import json
 import re
 from dotenv import load_dotenv
@@ -265,9 +265,11 @@ def analyze_with_deepseek(price_data):
         database.record_positions_snapshot(RUN_ID, snapshot_ts, positions_payload)
     except Exception:
         logger.debug("数据库写入失败：账户/仓位快照", exc_info=True)
-
+        
+    now = datetime.now(timezone.utc)
+    ts_milli = int(now.timestamp() * 1_000)
     prompt = f"""
-    自您开始交易以来已过去{minutes_elapsed}分钟。
+    当前时间戳(毫秒)：{ts_milli}, 自您开始交易以来已过去{minutes_elapsed}分钟。
 
     下方为您提供各类状态数据、价格数据及预测信号，助您发掘超额收益。其下为您的当前账户信息、资产价值、业绩表现、持仓情况等。
 
