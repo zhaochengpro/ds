@@ -558,6 +558,8 @@ def analyze_with_deepseek(price_data):
                 4. 风险管理优先于利润最大化
                 5. 犹豫时选择"持仓"而非强行交易
                 
+                ---
+                
                 # 策略坚持机制（强制执行）
 
                 一旦建立仓位，必须严格执行以下持仓纪律：
@@ -569,6 +571,8 @@ def analyze_with_deepseek(price_data):
                 5. **禁止频繁反转**：同一资产24小时内禁止方向反转交易（多转空或空转多）
 
                 违反策略坚持原则将导致严重的长期绩效下降。
+                
+                ---
                 
                 # 差异化开平仓标准
 
@@ -587,7 +591,14 @@ def analyze_with_deepseek(price_data):
                 4. 至少4个技术指标显示明确的趋势耗尽
 
                 **重要**：价格波动是市场自然行为，不构成平仓理由。只有趋势反转才是有效平仓信号。
+                
+                ---
+                
+                # 出场管理系统
 
+                设置多层次出场机制：
+                1. **跟踪止损**：盈利超过1.5倍ATR后启动移动止损，确保锁定大部分利润
+                
                 ---
 
                 # 窗口管理背景
@@ -1012,6 +1023,29 @@ def execute_trade(signal_data, price_data_obj):
                 )
             elif action == 'HOLD' or action == 'WAIT':
                 coin_logger.info("操作 | HOLD")
+                if current_position:
+                    if (tp != 0 and f"{pos_tp:.2f}" != f"{tp:.2f}") or (sl != 0 and f"{pos_sl:.2f}" != f"{sl:.2f}"):
+                        exchange.private_post_trade_cancel_algos([{
+                            "instId": f"{coin}-USDT-SWAP",
+                            "algoId": current_position['algoId']
+                        }])
+                        coin_logger.info(
+                            f"取消历史止盈止损"
+                        )
+                        params = {
+                            "instId": f"{coin}-USDT-SWAP",
+                            "tdMode": "cross",
+                            "side": "sell" if current_position.get('side') == 'long' else 'buy',
+                            "ordType": "conditional",
+                            "sz": algo_amount,
+                            "slTriggerPx": str(sl),
+                            "slOrdPx": str(sl),
+                            "posSide": current_position.get('side'),
+                        }
+                        exchange.private_post_trade_order_algo(params=params)
+                        coin_logger.info(
+                            f"调整止盈止损 | 止损 {pos_sl:.2f} -> {sl:.2f}"
+                        )
             time.sleep(2)
             position = get_current_positions(exchange, logger, price_data_obj.keys())
             coin_logger.info(f"最新持仓 | {summarize_positions(position)}")
