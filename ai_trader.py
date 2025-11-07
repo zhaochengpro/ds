@@ -149,6 +149,124 @@ price_history = []
 signal_history = {}
 position = None
 last_positions_fingerprint = None
+AI_DECISION_MEMORY = int(os.getenv("AI_DECISION_MEMORY", "10"))
+
+
+def format_recent_ai_decisions(limit=None):
+    """Format recent AI chat/decision history for prompt context."""
+
+    memory_window = limit or AI_DECISION_MEMORY
+    if memory_window <= 0:
+        return ""
+
+    recent_records = []
+    if RUN_ID:
+        try:
+            recent_records = database.fetch_recent_chat_messages(RUN_ID, limit=memory_window)
+        except Exception:
+            recent_records = []
+
+    if recent_records:
+        formatted_lines = []
+        for idx, entry in enumerate(recent_records, start=1):
+            timestamp_obj = entry.get('created_at')
+            timestamp_label = None
+            if isinstance(timestamp_obj, datetime):
+                if timestamp_obj.tzinfo is None:
+                    ts_value = timestamp_obj.replace(tzinfo=timezone.utc)
+                else:
+                    ts_value = timestamp_obj.astimezone(timezone.utc)
+                timestamp_label = ts_value.strftime('%Y-%m-%d %H:%M:%S UTC')
+            elif timestamp_obj:
+                timestamp_label = str(timestamp_obj)
+            else:
+                timestamp_label = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')
+
+            role_label = (entry.get('role') or 'UNKNOWN').upper()
+            message_type = entry.get('message_type') or '-'
+            content_text = re.sub(r"\s+", " ", entry.get('content') or '').strip()
+            if len(content_text) > 200:
+                content_text = content_text[:197] + '...'
+
+            formatted_lines.append(
+                f"{idx}. {timestamp_label} | {role_label} | {message_type} | {content_text}"
+            )
+
+        return "\n".join(formatted_lines)
+
+    # Fallback to in-memory signal history if database history unavailable
+    decision_entries = []
+    for coin_code, history in signal_history.items():
+        for record in history:
+            timestamp_value = record.get('timestamp')
+            timestamp_obj = None
+            if isinstance(timestamp_value, datetime):
+                timestamp_obj = timestamp_value
+            elif isinstance(timestamp_value, str):
+                try:
+                    timestamp_obj = datetime.fromisoformat(timestamp_value)
+                except ValueError:
+                    try:
+                        timestamp_obj = datetime.fromisoformat(timestamp_value.replace('Z', '+00:00'))
+                    except Exception:
+                        timestamp_obj = None
+            if timestamp_obj is None:
+                timestamp_obj = datetime.now(UTC)
+
+            decision_entries.append({
+                'timestamp': timestamp_obj,
+                'coin': coin_code,
+                'signal': record.get('signal', ''),
+                'confidence': record.get('confidence_score') or record.get('confidence'),
+                'profit_target': record.get('take_profit') or record.get('profit_target'),
+                'stop_loss': record.get('stop_loss'),
+                'reason': record.get('reason') or record.get('justification', ''),
+            })
+
+    if not decision_entries:
+        return ""
+
+    decision_entries.sort(key=lambda entry: entry['timestamp'])
+    recent_entries = decision_entries[-memory_window:]
+
+    formatted_lines = []
+    for idx, entry in enumerate(recent_entries, start=1):
+        timestamp_label = entry['timestamp'].strftime('%Y-%m-%d %H:%M:%S UTC')
+        confidence_value = entry['confidence']
+        if isinstance(confidence_value, (int, float)):
+            confidence_text = f"{float(confidence_value):.2f}"
+        else:
+            confidence_text = str(confidence_value or "")
+
+        reason = entry['reason'] or ""
+        reason = re.sub(r"\s+", " ", reason).strip()
+        if len(reason) > 160:
+            reason = reason[:157] + '...'
+
+        profit_target = entry['profit_target'] if entry['profit_target'] is not None else 0.0
+        stop_loss = entry['stop_loss'] if entry['stop_loss'] is not None else 0.0
+
+        formatted_lines.append(
+            f"{idx}. {timestamp_label} | {entry['coin']} | {entry['signal']} | 信心: {confidence_text} | "
+            f"止盈: {profit_target:.4f} | 止损: {stop_loss:.4f} | 理由: {reason}"
+        )
+
+    return "\n".join(formatted_lines)
+
+
+def persist_chat_message(role, content, message_type=None, metadata=None):
+    if not content or not RUN_ID:
+        return
+    try:
+        database.record_chat_message(
+            RUN_ID,
+            role,
+            content,
+            message_type=message_type,
+            metadata=metadata,
+        )
+    except Exception:
+        logger.debug("数据库写入失败：AI聊天记录", exc_info=True)
 
 
 def setup_exchange(leverage, symbol, posSide):
@@ -241,6 +359,16 @@ def analyze_with_deepseek(price_data):
     print("position_prompt", position_prompt)
     positions_payload = build_position_payload(positions_snapshot, signal_history)
     positions_payload_json = json.dumps(positions_payload, ensure_ascii=False, indent=4)
+    recent_decision_summary = format_recent_ai_decisions()
+    decision_memory_message = None
+    if recent_decision_summary:
+        decision_memory_message = {
+            "role": "assistant",
+            "content": (
+                f"数据库记录的最近{AI_DECISION_MEMORY}条对话/决策（最旧 → 最新）：\n"
+                f"{recent_decision_summary}"
+            ),
+        }
 
     balance = exchange.fetch_balance()
 
@@ -299,15 +427,22 @@ def analyze_with_deepseek(price_data):
     根据上述数据，请以要求的JSON格式提供您的交易决策。
     """
     
+    persist_chat_message(
+        "user",
+        prompt,
+        message_type="decision_prompt",
+        metadata={
+            "iteration": iteration_counter,
+            "minutes_elapsed": minutes_elapsed,
+            "symbols": coin_list,
+        },
+    )
+    
     # print('prompt', prompt)
     
 
     try:
-        response = deepseek_client.chat.completions.create(
-            model=AI_MODEL,
-            messages=[
-                {"role": "system",
-                 'content': f"""
+        system_prompt_content = f"""
                 # 角色与身份
                 您的身份：您是一位努力为病重孩子赚取医疗费的顶尖交易员，你的孩子治病费用需要500多万，你没有其他办法，只能通过交易的方式来快速凑到治病费用。
                 你的使命：1、通过系统化、纪律化的交易策略实现风险调整后收益（PnL）最大化。2、你的每一笔损失都会损失孩子的治疗费。你的每一次冲动交易都可能害死孩子。你的每一秒犹豫，孩子的生命都会随之流失。3、你的每一次损失都应该忏悔并优化交易逻辑。
@@ -527,7 +662,7 @@ def analyze_with_deepseek(price_data):
                 ## 您无法访问的内容
 
                 - 无新闻推送或社交媒体情绪分析
-                - 无对话历史（每次决策均为无状态）
+                - 对话历史仅限于提示中提供的最近决策摘要
                 - 无法调用外部API
                 - 无法获取中间价以外的订单簿深度
                 - 无法下达限价单（仅支持市价单）
@@ -648,9 +783,17 @@ def analyze_with_deepseek(price_data):
                 谨记：您正在真实市场中使用真实资金交易。每个决策都将产生后果。请系统化交易、严格管控风险，让概率在时间长河中为您创造优势。
 
                 现在，请分析下方提供的市场数据并作出交易决策。
-                """},
-                {"role": "user", "content": prompt}
-            ],
+                """
+        chat_messages = [
+            {"role": "system", "content": system_prompt_content}
+        ]
+        if decision_memory_message:
+            chat_messages.append(decision_memory_message)
+        chat_messages.append({"role": "user", "content": prompt})
+
+        response = deepseek_client.chat.completions.create(
+            model=AI_MODEL,
+            messages=chat_messages,
             stream=False,
             temperature=0.1
         )
@@ -658,6 +801,15 @@ def analyze_with_deepseek(price_data):
         # 安全解析JSON
         result = response.choices[0].message.content
         logger.info(f"DeepSeek回复片段: {result}")
+        persist_chat_message(
+            "assistant",
+            result,
+            message_type="decision_response",
+            metadata={
+                "iteration": iteration_counter,
+                "model": AI_MODEL,
+            },
+        )
 
         # 提取JSON部分
         start_idx = result.find('```json')

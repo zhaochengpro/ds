@@ -222,6 +222,21 @@ class DatabaseClient:
                         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                         """
                     )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS ai_chat_history (
+                            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                            run_id CHAR(36) NOT NULL,
+                            role VARCHAR(16) NOT NULL,
+                            message_type VARCHAR(32),
+                            content LONGTEXT NOT NULL,
+                            metadata JSON,
+                            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                            INDEX idx_chat_run_created (run_id, created_at),
+                            INDEX idx_chat_role (role)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                        """
+                    )
                 self._initialized = True
                 LOGGER.info("MySQL persistence initialized successfully.")
             except Exception as exc:  # pragma: no cover - initialization errors
@@ -539,6 +554,93 @@ class DatabaseClient:
                 )
         except Exception:
             LOGGER.exception("Failed to persist AI signals for run %s", run_id)
+
+    def record_chat_message(
+        self,
+        run_id: Optional[str],
+        role: Optional[str],
+        content: Optional[str],
+        message_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not self.enabled or not run_id or not content:
+            return
+        role_value = (role or "").lower() or None
+        metadata_json = None
+        if metadata is not None:
+            try:
+                metadata_json = json.dumps(metadata, ensure_ascii=False)
+            except (TypeError, ValueError):
+                metadata_json = json.dumps({"repr": str(metadata)}, ensure_ascii=False)
+        try:
+            with self._connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO ai_chat_history (
+                        run_id, role, message_type, content, metadata, created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        run_id,
+                        role_value,
+                        message_type,
+                        content,
+                        metadata_json,
+                        _to_db_timestamp(_utc_now()),
+                    ),
+                )
+        except Exception:
+            LOGGER.exception("Failed to record AI chat message for run %s", run_id)
+
+    def fetch_recent_chat_messages(
+        self,
+        run_id: Optional[str],
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        if not self.enabled or not run_id:
+            return []
+        try:
+            with self._connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT role, message_type, content, metadata, created_at
+                    FROM ai_chat_history
+                    WHERE run_id = %s
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT %s
+                    """,
+                    (run_id, max(1, int(limit or 10))),
+                )
+                rows = cursor.fetchall() or []
+        except Exception:
+            LOGGER.exception("Failed to fetch chat history for run %s", run_id)
+            return []
+
+        records: List[Dict[str, Any]] = []
+        for row in reversed(rows):
+            metadata_value = row.get("metadata")
+            metadata_dict = None
+            if metadata_value:
+                if isinstance(metadata_value, str):
+                    try:
+                        metadata_dict = json.loads(metadata_value)
+                    except json.JSONDecodeError:
+                        metadata_dict = {"raw": metadata_value}
+                elif isinstance(metadata_value, (dict, list)):
+                    metadata_dict = metadata_value
+            records.append(
+                {
+                    "role": (row.get("role") or "").upper(),
+                    "message_type": row.get("message_type"),
+                    "content": row.get("content") or "",
+                    "metadata": metadata_dict,
+                    "created_at": row.get("created_at"),
+                }
+            )
+        return records
 
     def fetch_equity_timeframes(
         self,
