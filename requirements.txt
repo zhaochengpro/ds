@@ -11,3 +11,6 @@ argparse
 fastapi
 uvicorn
 websockets
+TA-Lib
+seaborn
+scipy

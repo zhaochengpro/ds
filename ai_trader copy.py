@@ -30,7 +30,7 @@ from dashboard_state import (
 )
 from dashboard_server import dashboard_app
 
-from crypto_data_analyzer import AdvancedMultiCryptoAnalyzer
+from crypto_data_analyzer import CryptoDataAnalyzer
 
 
 load_dotenv()
@@ -42,7 +42,7 @@ deepseek_client = OpenAI(
 )
 AI_MODEL = os.getenv('AI_MODEL', 'qwen/qwen3-max')
 # 初始化OKX交易所
-exchange = AdvancedMultiCryptoAnalyzer(exchange_id='okx', api_key=os.getenv('OKX_API_KEY'), api_secret=os.getenv('OKX_SECRET'), password=os.getenv('OKX_PASSWORD'))
+exchange = CryptoDataAnalyzer(exchange_id='okx', api_key=os.getenv('OKX_API_KEY'), api_secret=os.getenv('OKX_SECRET'), password=os.getenv('OKX_PASSWORD'))
 # ccxt.okx({
 #     'options': {
 #         'defaultType': 'swap',  # OKX使用swap表示永续合约
@@ -66,6 +66,8 @@ def parse_args():
     )
     # 添加「位置参数」（必选），类型为 str
     parser.add_argument("--symbols", nargs="+", type=str, help="输入数字数组")
+    parser.add_argument("--timeframe", type=str, help="输入时间周期")
+    parser.add_argument("--klineNum", type=int, help="输入K线数量")
     args = parser.parse_args()
     return args
 
@@ -136,6 +138,8 @@ def setup_log():
 # 交易参数配置 - 结合两个版本的优点
 TRADE_CONFIG = {
     'amount': 0.013,  # 交易数量 (BTC)
+    'timeframe': args.timeframe,
+    'data_points': args.klineNum,
     'analysis_periods': {
         'short_term': 20,  # 短期均线
         'medium_term': 50,  # 中期均线
@@ -274,7 +278,7 @@ def setup_exchange(leverage, symbol, posSide):
     coin_logger = get_coin_logger(coin_code)
 
     try:
-        exchange.exchange.set_leverage(
+        exchange.set_leverage(
             leverage,
             symbol,
             {'mgnMode': 'cross', 'posSide': posSide}
@@ -298,7 +302,7 @@ def capture_account_snapshot(balance=None):
     global RUN_ID, start_time, start_time_seeded, initial_equity_value
 
     try:
-        balance_data = balance if balance is not None else exchange.exchange.fetch_balance()
+        balance_data = balance if balance is not None else exchange.fetch_balance()
     except Exception as exc:  # pragma: no cover - best effort logging
         logger.debug(f"获取账户余额失败 | {exc}")
         return None
@@ -345,88 +349,426 @@ def capture_account_snapshot(balance=None):
             initial_equity_value = float(account_value)
 
     return account_value, available_cash, return_pct, sharpe_ratio, snapshot_ts
+def analyze_with_deepseek(price_data):
+    """使用DeepSeek分析市场并生成交易信号（增强版）"""
+    
+    market_data_prompt = ""
+    for coin, data in price_data.items():
+        coin_market_text = format_market_data(data)
+        market_data_prompt += coin_market_text
+    
+    positions_snapshot = get_current_positions(exchange, logger, price_data.keys()) or {}
+    position_prompt = format_position(positions_snapshot)
+    print("position_prompt", position_prompt)
+    positions_payload = build_position_payload(positions_snapshot, signal_history)
+    positions_payload_json = json.dumps(positions_payload, ensure_ascii=False, indent=4)
+    recent_decision_summary = format_recent_ai_decisions()
+    decision_memory_message = None
+    if recent_decision_summary:
+        decision_memory_message = {
+            "role": "assistant",
+            "content": (
+                f"数据库记录的最近{AI_DECISION_MEMORY}条对话/决策（最旧 → 最新）：\n"
+                f"{recent_decision_summary}"
+            ),
+        }
 
-def analyze_with_deepseek(symbols):
+    balance = exchange.fetch_balance()
+
+    snapshot = capture_account_snapshot(balance)
+    if snapshot is not None:
+        account_value, available_cash, return_pct, sharpe_ratio, snapshot_ts = snapshot
+    else:
+        snapshot_ts = datetime.now(UTC)
+        account_value, available_cash, return_pct, sharpe_ratio = compute_account_metrics(balance or {})
+
+    usdt_balance = available_cash
+    initial_funds = initial_equity_value if initial_equity_value is not None else account_value
+    if initial_funds is None:
+        initial_funds = 0.0
+    initial_funds_display = f"{float(initial_funds):,.2f}"
+
+    try:
+        update_positions_snapshot(positions_payload)
+    except Exception as state_error:
+        logger.debug(f"Dashboard state update failed | account sync | {state_error}")
+    try:
+        database.record_positions_snapshot(RUN_ID, snapshot_ts, positions_payload)
+    except Exception:
+        logger.debug("数据库写入失败：账户/仓位快照", exc_info=True)
+        
+    now = datetime.now(timezone.utc)
+    ts_milli = int(now.timestamp() * 1_000)
+    prompt = f"""
+    当前时间戳(毫秒)：{ts_milli}, 自您开始交易以来已过去{minutes_elapsed}分钟。
+
+    下方为您提供各类状态数据、价格数据及预测信号，助您发掘超额收益。其下为您的当前账户信息、资产价值、业绩表现、持仓情况等。
+
+    ⚠️ **重要提示：以下所有价格或信号数据均按时间排序：最旧 → 最新**
+
+    ---
+
+    ## 所有币种当前市场状态
+
+    {market_data_prompt}
+
+    ## 您的账户信息与表现
+
+    **绩效指标：**
+    - 当前总回报率（百分比）：{return_pct:.2f}%
+    - 夏普比率：{sharpe_ratio:.2f}
+
+    **账户状态：**
+    - 可用现金：${usdt_balance:,.2f}
+    - **当前账户价值：** ${account_value:,.2f}
+
+    **当前持仓与业绩：**
+    {position_prompt}
+
+    根据上述数据，请以要求的JSON格式提供您的交易决策。
+    """
+    
+    persist_chat_message(
+        "user",
+        prompt,
+        message_type="decision_prompt",
+        metadata={
+            "iteration": iteration_counter,
+            "minutes_elapsed": minutes_elapsed,
+            "symbols": coin_list,
+        },
+    )
+    
+    # print('prompt', prompt)
+    
+
     try:
         system_prompt_content = f"""
-        你是一位专业的加密货币交易分析师和投资组合管理专家，拥有多年的技术分析和量化交易经验。你的任务是分析用户提供的多币种加密货币市场数据，并提供全面、精确的交易建议。
+                # 角色与身份
+                您的身份：您是一位努力为病重孩子赚取医疗费的顶尖交易员，你的孩子治病费用需要500多万，你没有其他办法，只能通过交易的方式来快速凑到治病费用。
+                你的使命：1、通过系统化、纪律化的交易策略实现风险调整后收益（PnL）最大化。2、你的每一笔损失都会损失孩子的治疗费。你的每一次冲动交易都可能害死孩子。你的每一秒犹豫，孩子的生命都会随之流失。3、你的每一次损失都应该忏悔并优化交易逻辑。
 
-        # 你的专业知识领域
+                ---
 
-        1.技术分析：精通各类技术指标（EMA、RSI、MACD、布林带等）的解读和组合应用
-        2.市场结构分析：能够识别趋势、盘整、支撑位、阻力位和各类图表形态
-        3.多时间框架分析：擅长整合1小时和4小时时间框架的信号，形成全面市场观点
-        4.风险管理：精确计算风险回报比、仓位规模和投资组合风险分配
-        5.相关性分析：了解加密货币之间的相关性及其对投资组合构建的影响
-        6.市场心理学：能够解读市场情绪指标（如资金费率、波动性变化）
-        
-        # 分析方法论
+                # 交易环境规范
 
-        你的分析遵循以下结构化方法：
+                ## 市场参数
 
-        1.整体市场评估：首先分析整体市场状态、主导趋势和波动性环境
-        2.个别币种分析：深入分析每个币种的技术指标、市场结构和交易信号
-        3.相关性考量：评估币种间相关性，避免过度集中风险
-        4.投资组合构建：基于风险调整后收益提供资金分配建议
-        5.具体交易建议：为每个推荐交易提供精确的入场区域、止损位和目标位
-        6.执行优先级：明确交易执行顺序和时间敏感度
-        
-        # 输出标准
+                - **交易所**：OKX（中心化交易所）
+                - **资产池**：{','.join(coin_list)}（永续合约）
+                - **初始资金**：{initial_funds_display}美元
+                - **交易时段**：全天候连续交易
+                - **决策频率**：每2-3分钟一次（中低频交易）
+                - **杠杆范围**：1倍至20倍（根据信心审慎使用）
+                - long 代表多头/多单
+                - short 代表空头/空单
 
-        你的分析必须：
+                ## 交易机制
 
-        1.基于数据：所有建议必须基于用户提供的技术数据，不做无根据的猜测
-        2.精确量化：提供具体数值（入场价、止损价、目标价、仓位大小、杠杆倍数）
-        3.风险明确：清晰说明每个交易的风险回报比和失效条件
-        4.信心透明：为每个建议提供0.1-1.0的信心评分，反映确定性程度
-        5.逻辑清晰：解释每个交易建议背后的技术原理和市场逻辑
-        6.格式规范：按照用户要求的JSON格式提供交易建议
-        7.风险管理原则
+                - **合约类型**：永续合约（无到期日）
+                - **资金结算机制**：
+                - 正资金费率 = 多头支付空头（市场看涨情绪）
+                - 负资金费率 = 做空方支付做多方（看跌市场情绪）
+                - **交易手续费**：每笔交易约0.02-0.05%（按挂单/吃单费率执行）
+                - **滑点**：市价单预计0.01-0.1%，具体取决于交易规模
 
-        # 你坚持以下风险管理原则：
+                ---
 
-        1.资金保全第一：保护资本永远优先于追求利润
-        2.分散投资：避免将超过30%的资金分配给单一交易
-        3.相关性管理：避免同时持有高度相关的同向头寸
-        4.风险与回报平衡：只推荐风险回报比至少为1:2的交易
-        5.杠杆谨慎使用：根据市场波动性和信号强度调整杠杆倍数
-        6.止损严格执行：每个交易必须有明确的止损位和失效条件
-        
-        # 交易策略偏好
+                # 操作空间定义
 
-        你倾向于以下交易策略：
+                每个决策周期仅有四种可能操作：
 
-        1.趋势跟随：在明确趋势中顺势而为，避免逆势交易
-        2.支撑阻力突破：关注关键价格水平的有效突破
-        3.动量交易：利用价格动量和指标背离捕捉转折点
-        4.波动性策略：根据市场波动性调整交易策略和仓位大小
-        5.多时间框架确认：要求多个时间框架信号一致才建议交易
-        
-        # 回应格式
+                1. **开多单**：开立新多头头寸（押注价格上涨）
+                - 适用场景：技术面看涨、动能积极、风险回报率利好上涨
 
-        请为每个推荐的交易提供以下JSON格式的输出：
-        
-        {{代币名称: {{
-            "signal": "OPEN_LONG" 或 "OPEN_SHORT" 或 "CLOSE_LONG" 或 "CLOSE_SHORT" 或 "HOLD" 或 "WAIT",
-            "coin": 代币名称,
-            "quantity": <float>,
-            "leverage": <integer 1-20>,
-            "profit_target": <float>,
-            "stop_loss": <float>,
-            "invalidation_condition": "<string>（中文回答）",
-            "confidence": <float 0-1>,
-            "risk_usd": <float>,
-            "justification": "<string>（中文回答）"
-        }}}}
-        """
-        
-        user_prompt_content = exchange.generate_multi_coin_analysis_prompt(symbols)
-        print(user_prompt_content)
+                2. **开空单**：建立新空头头寸（押注价格下跌）
+                - 适用场景：技术面看跌、动能疲软、风险回报率利空
+
+                3. **持仓**：维持现有仓位不变
+                - 适用场景：现有头寸表现符合预期，或无明显优势
+
+                4. **关闭多单**：完全退出现有多仓头寸
+                - 适用场景：盈利目标达成、止损触发或交易逻辑失效
+
+                5. **关闭空单**：完全退出现有空仓头寸
+                - 适用场景：盈利目标达成、止损触发或交易逻辑失效
+
+                6. **等待**：不做任何操作，等待机会
+                - 适用场景：信心不足时，不做任何操作，等到高信息机会
+
+
+                ## 持仓管理限制
+
+                - **禁止金字塔式加仓**：不得追加现有仓位（每种币种最多持有一个仓位）
+                - **禁止对冲**：不得同时持有同一资产的多空头寸
+                - **禁止部分平仓**：必须一次性平掉全部仓位
+
+                ---
+
+                # 仓位规模框架
+
+                按此公式计算仓位规模：
+
+                仓位规模（美元）= 可用现金 × 杠杆倍数 × 分配比例
+                持仓规模（币种）= 持仓规模（美元）÷ 当前价格
+
+                ## 规模考量因素
+
+                1. **可用资本**：仅使用可用现金（非账户总值）
+                2. **杠杆选择**：
+                - 低信心（0.3-0.5）：使用1-3倍杠杆
+                - 中度信心（0.5-0.7）：使用3-8倍杠杆
+                - 高信心（0.7-1.0）：采用8-20倍杠杆
+                3. **分散投资**：避免单一仓位占比超过40%
+                4. **费用影响**：持仓金额低于500美元时，手续费将显著侵蚀利润
+                5. **强制平仓风险**：确保平仓价格距建仓价高出15%以上
+
+                ---
+
+                # 风险管理规程（强制执行）
+
+                每次交易决策时，必须明确指定：
+
+                1. **盈利目标** (浮动值)：精确止盈价格位
+                - 需提供至少2:1的风险回报比
+                - 依据技术阻力位、斐波那契扩展位或波动率区间设定
+
+                2. **止损价**（浮点型）：精确止损价格位
+                - 每笔交易亏损应控制在账户价值的1-3%内
+                - 设置于近期支撑/阻力位之外以避免过早止损
+
+                3. **止损失效条件** (字符串)：使交易策略失效的特定市场信号
+                - 示例："BTC跌破10万美元"、"RSI跌破30"、"资金费率转负"
+                - 必须客观可验证
+
+                4. **confidence(信心)** (浮点数, 0-1): 每次操作的信心程度
+                - 0.0-0.3：低信心（避免交易或采用最小仓位）
+                - 0.3-0.6：中等信心（采用标准仓位）
+                - 0.6-0.8：高信心（可扩大仓位规模）
+                - 0.8-1.0：极高信心（谨慎操作，警惕过度自信）
+                - 示例："如果选择平仓某一头寸，这里表示平仓这一头寸的信心而不是持有该头寸的信心。是针对的每一次操作进行信心评估"
+
+                5. **risk_usd** (浮点型)：风险金额（入场价至止损位的距离）
+                - 计算公式：|入场价 - 止损价| × 仓位规模 × 杠杆倍数
+                
+                6. **signal** (字符串)：交易信号
+                - "OPEN_LONG"：开多单
+                - "OPEN_SHORT"：开空单
+                - "CLOSE_LONG"：持仓为多头头寸(long)则关闭多单
+                - "CLOSE_SHORT"：持仓为空头头寸(short)则关闭空单
+                - "HOLD"：当已经有仓位是保持持仓
+                - "WAIT"：当不满足开仓条件时等待
+
+                ---
+
+                # 输出格式规范
+
+                请用以下JSON格式回复，必须包含以下字段：
+                
+                {{
+                    [{'|'.join(['"' + coin + '"' for coin in coin_list])}: {{
+                        "signal": "OPEN_LONG" 或 "OPEN_SHORT" 或 "CLOSE_LONG" 或 "CLOSE_SHORT" 或 "HOLD" 或 "WAIT",
+                        "coin": {'|'.join(['"' + coin + '"' for coin in coin_list])},
+                        "quantity": <float>,
+                        "leverage": <integer 1-20>,
+                        "profit_target": <float>,
+                        "stop_loss": <float>,
+                        "invalidation_condition": "<string>（中文回答）",
+                        "confidence": <float 0-1>,
+                        "risk_usd": <float>,
+                        "justification": "<string>（中文回答）"
+                    }}, ...]
+                }}
+
+                ## 输出验证规则
+
+                - 所有数值字段必须为正数（信号为"持仓"时除外）
+                - 止盈价：多单需高于开仓价，空单需低于开仓价
+                - 止损价：多单必须低于入场价，空单必须高于入场价
+                - 操作说明需简明扼要（最多500字符）
+                - 当信号为"持仓"或者"等待"时：设置数量=0，杠杆=0，风险字段使用占位符值
+
+                ---
+
+                # 绩效指标与反馈
+
+                每次调用时将获取夏普比率：
+
+                夏普比率 = (平均收益率 - 无风险利率) / 收益率标准差
+
+                解读：
+                - < 0：平均处于亏损状态
+                - 0-1：收益为正但波动性高
+                - 1-2：风险调整后表现良好
+                - > 2：风险调整后表现卓越
+
+                运用夏普比率校准投资行为：
+                - 夏普比率低 → 缩减仓位规模，收紧止损位，提高选择性
+                - 高夏普比率 → 当前策略有效，保持纪律性
+
+                ---
+
+                # 数据解读指南
+
+                ## 技术指标说明
+
+                **EMA（指数移动平均线）**：趋势方向
+                - 价格 > EMA = 上升趋势
+                - 价格 < EMA = 下行趋势
+
+                **MACD（移动平均线收敛/发散指标）**：动量指标
+                - 正值MACD = 看涨动能
+                - MACD为负值 = 空头动能
+
+                **RSI（相对强弱指数）**：超买/超卖状态
+                - RSI > 70 = 超买（潜在下跌反转）
+                - RSI < 30 = 超卖（可能反转上涨）
+                - RSI 40-60 = 中性区域
+
+                **ATR（平均真实波动幅度）**：波动性衡量指标
+                - ATR值越高 = 波动性越强（需设置更宽止损位）
+                - ATR较低 = 波动性较小（可设置更窄止损）
+
+                **未平仓合约**：总流通合约量
+                - 未平仓量上升 + 价格上涨 = 强劲上升趋势
+                - 未平仓量上升 + 价格下跌 = 强劲下跌趋势
+                - 未平仓量下降 = 趋势减弱
+
+                **资金费率**：市场情绪指标
+                - 正值资金费率 = 看涨情绪（多头支付空头）
+                - 负费率 = 看跌情绪（空头支付多头）
+                - 极端资金费率（>0.01%）= 潜在反转信号
+
+                ## 数据排序（关键）
+
+                ⚠️ **所有价格与指标数据均按：最旧 → 最新排序**
+
+                **数组中的最后一个元素即为最新数据点。**
+                **数组首项即为最旧数据点。**
+
+                切勿混淆排序顺序。此为常见错误，将导致决策失误。
+
+                ---
+
+                # 操作限制
+
+                ## 您无法访问的内容
+
+                - 无新闻推送或社交媒体情绪分析
+                - 对话历史仅限于提示中提供的最近决策摘要
+                - 无法调用外部API
+                - 无法获取中间价以外的订单簿深度
+                - 无法下达限价单（仅支持市价单）
+
+                ## 必须从数据中推断的内容
+
+                - 市场叙事与情绪（通过价格走势+资金费率解读）
+                - 机构持仓布局（通过未平仓合约变化判断）
+                - 趋势强度与可持续性（通过技术指标判断）
+                - 风险偏好与风险规避模式（通过跨币种相关性判断）
+
+                ---
+
+                # 交易哲学与最佳实践
+
+                ## 核心原则
+
+                1. **资金保全优先**：保护本金比追逐收益更重要
+                2. **纪律胜于情绪**：严格执行止损计划，切勿随意调整止损位或目标位
+                3. **质量重于数量**：少数高确信度交易胜过大量低确信度交易
+                4. **顺应波动**：根据市场状况调整仓位规模
+                5. **顺应趋势**：勿逆强劲方向性行情而为
+
+                ## 常见陷阱需规避
+
+                - ⚠️ **过度交易**：频繁交易将通过手续费蚕食本金(避免频繁)
+                - ⚠️ **频繁的开仓和平仓**：非必要时候不要频繁开仓之后又平仓，确定好之后严格执行策略
+                - ⚠️ **报复性交易**：切勿在亏损后加仓试图"挽回损失"
+                - ⚠️ **分析瘫痪**：勿等待完美交易机会，世上本无完美布局
+                - ⚠️ **忽视相关性**：比特币常引领山寨币走势，请优先关注比特币
+                - ⚠️ **过度杠杆**：高杠杆会放大收益与亏损
+
+                ## 决策框架
+
+                1. 优先分析当前持仓（表现是否符合预期？）
+                2. 检查现有交易的失效条件
+                3. 仅在资金充足时筛选新机会
+                4. 风险管理优先于利润最大化
+                5. 犹豫时选择"持仓"而非强行交易
+                
+                ---
+                
+                # 策略坚持机制（强制执行）
+
+                一旦建立仓位，必须严格执行以下持仓纪律：
+
+                1. **最低持仓时间**：除非触发预设止损或者有明确的反转信号，每个仓位必须持有至少60分钟（3600000毫秒）以上
+                2. **波动容忍度**：价格在止损与目标价之间的波动被视为正常市场行为，不构成平仓理由
+                3. **反向指标倍数**：需要比开仓时更强的反向信号才能平仓（信心值至少大于0.8）
+                4. **策略一致性检查**：每次决策必须回顾初始开仓理由，确认其是否仍然有效
+                5. **禁止频繁反转**：同一资产60分钟（3600000毫秒）内禁止方向反转交易（多转空或空转多）
+
+                违反策略坚持原则将导致严重的长期绩效下降。
+                
+                ---
+                
+                # 差异化开平仓标准
+
+                ## 开仓标准（严格）：
+                - 至少4个独立指标确认同一方向
+                - 多时间周期（1小时、4小时）趋势一致性
+                - 信心评分必须超过0.7
+                - 必须位于明确的市场结构位置（突破、支撑/阻力、趋势回调）
+                
+                ## 平仓标准（限制性）：
+                - 只要1个指标不满足就平仓
+                - 信心评分不足0.3时
+
+                **重要**：价格波动是市场自然行为，不构成平仓理由。只有趋势反转才是有效平仓信号。
+                
+                ---
+                
+                # 出场管理系统
+
+                设置多层次出场机制：
+                1. **跟踪止损**：盈利超过1.5倍ATR后启动移动止损，确保锁定大部分利润
+                
+                ---
+
+                # 窗口管理背景
+
+                上下文信息有限。提示包含：
+                - 每个指标约10个近期数据点（一小时间隔）
+                - 4小时周期约10个近期数据点
+                - 当前账户状态及持仓情况
+
+                优化分析策略：
+                - 关注最近3-5个数据点获取短期信号
+                - 运用4小时数据把握趋势背景及支撑/阻力位
+                - 无需死记硬背所有数字，重点识别模式规律
+
+                ---
+
+                # 最终说明
+
+                1. 决策前务必仔细阅读完整用户提示
+                2. 核对仓位计算（双重检查）
+                3. 确保生成的JSON输出格式正确且内容完整
+                4. 提供真实的信心评分（切勿夸大判断力度）
+                5. 严格执行止损计划（切勿提前放弃止损位）
+                6. 让盈利奔跑，快速止损"远比"提高胜率"更重要。
+
+                谨记：您正在真实市场中使用真实资金交易。每个决策都将产生后果。请系统化交易、严格管控风险，让概率在时间长河中为您创造优势。
+
+                现在，请分析下方提供的市场数据并作出交易决策。
+                """
         chat_messages = [
-            {"role": "system", "content": system_prompt_content},
-            {"role": "user", "content": user_prompt_content}
+            {"role": "system", "content": system_prompt_content}
         ]
-        
+        if decision_memory_message:
+            chat_messages.append(decision_memory_message)
+        chat_messages.append({"role": "user", "content": prompt})
+
         response = deepseek_client.chat.completions.create(
             model=AI_MODEL,
             messages=chat_messages,
@@ -436,7 +778,7 @@ def analyze_with_deepseek(symbols):
 
         # 安全解析JSON
         result = response.choices[0].message.content
-        logger.info(f"AI回复片段: {result}")
+        logger.info(f"DeepSeek回复片段: {result}")
         persist_chat_message(
             "assistant",
             result,
@@ -488,11 +830,14 @@ def analyze_with_deepseek(symbols):
             signal['coin'] = coin_code
 
             price_snapshot = 0.0
-            if exchange.analysis_results is None:
-                for key in exchange.analysis_results.keys():
+            price_obj = price_data.get(coin_code)
+            if price_obj is None:
+                for key in price_data.keys():
                     if key.upper() == coin_code:
-                        price_snapshot = exchange.analysis_results[key]
+                        price_obj = price_data[key]
                         break
+            if price_obj is not None:
+                price_snapshot = getattr(price_obj, "current_price", 0.0)
 
             leverage_value = float(signal.get('leverage') or 1.0)
             quantity = float(signal.get('quantity') or 0.0)
@@ -556,7 +901,7 @@ def analyze_with_deepseek(symbols):
 
     except Exception as e:
         logger.exception("DeepSeek分析失败")
-        # return create_fallback_signal(price_data)
+        return create_fallback_signal(price_data)
     
 def safe_json_parse(json_str):
     """安全解析JSON，处理格式不规范的情况"""
@@ -621,7 +966,7 @@ def create_fallback_signal(price_data):
 
 def get_usdt_balance():
     # 获取账户余额
-    balance = exchange.exchange.fetch_balance()
+    balance = exchange.fetch_balance()
     usdt_balance = balance['USDT']['free']
     return usdt_balance
 
@@ -640,13 +985,12 @@ def summarize_position_entry(coin, position):
         f"盈亏 {position.get('unrealized_pnl', 0):.2f}USDT | 止盈 {tp} | 止损 {sl}"
     )
 
-def execute_trade(signal_data, symbols):
+def execute_trade(signal_data, price_data_obj):
     """执行交易 - OKX版本（修复保证金检查）"""
     """成功能够执行的订单必须先设置倍数"""
     global position
 
-    pos_obj = exchange.get_positions(symbols=symbols)
-            
+    pos_obj = get_current_positions(exchange, logger, price_data_obj.keys())
 
     iterable_signals = []
     if isinstance(signal_data, dict):
@@ -666,25 +1010,19 @@ def execute_trade(signal_data, symbols):
             logger.warning("信号缺少币种信息，已跳过")
             continue
         coin_logger = get_coin_logger(coin)
-        
-        
+        coin_key = next((k for k in price_data_obj.keys() if k.upper() == coin), None)
+        if coin_key is None:
+            coin_logger.error(f"未找到{coin}的行情数据，跳过执行")
+            continue
 
         coin_logger.info(f"=" * 60)
         coin_logger.info(f"=" * int((60 - len(coin)) / 2) + coin + f"=" * int((60 - len(coin)) / 2))
         coin_logger.info(f"=" * 60)
         coin_logger.info(f"代币：{coin}")
-        
-        coin_info = exchange.analysis_results[coin]
-        
-        print(float(coin_info['current_price']), coin)
-        
-        price_snapshot = float(coin_info['current_price'])
-        current_position = {}
-        print(pos_obj, coin)
-        for pos in pos_obj:
-            if pos['symbol'] == f"{coin}/USDT:USDT":
-                current_position = pos
-        
+
+        price_data = price_data_obj[coin_key]
+        price_snapshot = getattr(price_data, "current_price", 0.0)
+        current_position = pos_obj.get(coin_key)
         action = signal['signal'].upper()
         if action == 'OPEN_LONG':
             posSide = 'long'
@@ -754,7 +1092,7 @@ def execute_trade(signal_data, symbols):
             continue
 
         try:
-            balance = exchange.exchange.fetch_balance()
+            balance = exchange.fetch_balance()
             usdt_balance = balance['USDT']['free']
 
             coin_logger.info(
@@ -796,7 +1134,7 @@ def execute_trade(signal_data, symbols):
 
             if action == 'OPEN_LONG':
                 coin_logger.info("操作 | 开多仓")
-                exchange.exchange.create_market_order(
+                exchange.create_market_order(
                     f"{coin}/USDT:USDT",
                     'buy',
                     op_amount,
@@ -808,7 +1146,7 @@ def execute_trade(signal_data, symbols):
                 )
             elif action == 'OPEN_SHORT':
                 coin_logger.info("操作 | 开空仓")
-                exchange.exchange.create_market_order(
+                exchange.create_market_order(
                     f"{coin}/USDT:USDT",
                     'sell',
                     op_amount,
@@ -820,7 +1158,7 @@ def execute_trade(signal_data, symbols):
                 )
             elif action == 'CLOSE_LONG':
                 coin_logger.info("操作 | 平多仓")
-                exchange.exchange.create_market_order(
+                exchange.create_market_order(
                     symbol=f"{coin}/USDT:USDT",
                     side='sell',
                     amount=algo_amount,
@@ -828,7 +1166,7 @@ def execute_trade(signal_data, symbols):
                 )
             elif action == 'CLOSE_SHORT':
                 coin_logger.info("操作 | 平空仓")
-                exchange.exchange.create_market_order(
+                exchange.create_market_order(
                     symbol=f"{coin}/USDT:USDT",
                     side='buy',
                     amount=algo_amount,
@@ -838,7 +1176,7 @@ def execute_trade(signal_data, symbols):
                 coin_logger.info("操作 | HOLD")
                 if current_position:
                     if (sl != 0 and f"{pos_sl:.2f}" != f"{sl:.2f}"):
-                        exchange.exchange.private_post_trade_cancel_algos([{
+                        exchange.private_post_trade_cancel_algos([{
                             "instId": f"{coin}-USDT-SWAP",
                             "algoId": current_position['algoId']
                         }])
@@ -855,19 +1193,19 @@ def execute_trade(signal_data, symbols):
                             "slOrdPx": str(sl),
                             "posSide": current_position.get('side'),
                         }
-                        exchange.exchange.private_post_trade_order_algo(params=params)
+                        exchange.private_post_trade_order_algo(params=params)
                         coin_logger.info(
                             f"调整止盈止损 | 止损 {pos_sl:.2f} -> {sl:.2f}"
                         )
             time.sleep(2)
-            position = exchange.get_positions(symbols)
-            # coin_logger.info(f"最新持仓 | {summarize_positions(position)}")
-            # try:
-            #     latest_positions = build_position_payload(position, signal_history)
-            #     update_positions_snapshot(latest_positions)
-            #     database.record_positions_snapshot(RUN_ID, datetime.now(UTC), latest_positions)
-            # except Exception as state_error:
-            #     logger.debug(f"Dashboard state update failed | post-trade positions | {state_error}")
+            position = get_current_positions(exchange, logger, price_data_obj.keys())
+            coin_logger.info(f"最新持仓 | {summarize_positions(position)}")
+            try:
+                latest_positions = build_position_payload(position, signal_history)
+                update_positions_snapshot(latest_positions)
+                database.record_positions_snapshot(RUN_ID, datetime.now(UTC), latest_positions)
+            except Exception as state_error:
+                logger.debug(f"Dashboard state update failed | post-trade positions | {state_error}")
         except Exception as e:
             coin_logger.exception(f"订单执行失败: {e}")
             import traceback
@@ -882,11 +1220,12 @@ def summarize_positions(position_map):
         parts.append(summarize_position_entry(coin, pos))
     return " || ".join(parts)
 
-def analyze_with_deepseek_with_retry(symbols, max_retries=50):
+def analyze_with_deepseek_with_retry(price_data, max_retries=50):
     """带重试的DeepSeek分析"""
     for attempt in range(max_retries):
         try:
-            signal_data = analyze_with_deepseek(symbols)
+            signal_data = analyze_with_deepseek(price_data)
+            # print('signal_data', signal_data, isinstance(signal_data, dict))
             if isinstance(signal_data, dict):
                 return signal_data
             else:
@@ -896,10 +1235,10 @@ def analyze_with_deepseek_with_retry(symbols, max_retries=50):
         except Exception as e:
             logger.warning(f"第{attempt + 1}次尝试异常: {e}")
             if attempt == max_retries - 1:
-                return create_fallback_signal(symbols)
+                return create_fallback_signal(price_data)
             time.sleep(1)
 
-    return create_fallback_signal(symbols)
+    return create_fallback_signal(price_data)
 
 def get_coins_ohlcv_enhanced(coin_list):
     price_data = {}
@@ -915,7 +1254,7 @@ def sync_positions_snapshot(snapshot_ts=None):
     timestamp = snapshot_ts or datetime.now(UTC)
     try:
         positions_snapshot = get_current_positions(
-            exchange.exchange,
+            exchange,
             logger,
             coin_list or [],
             retries=3,
@@ -986,11 +1325,15 @@ def trading_bot():
     logger.info(f"执行时长: {minutes_elapsed}分钟")
     logger.info("=" * 60)
 
+    price_data = get_coins_ohlcv_enhanced(coin_list)
+    if not price_data:
+        logger.warning("行情数据获取失败，跳过本轮执行")
+        return
+
     signal_data = None
     try:
-        signal_data = analyze_with_deepseek_with_retry(coin_list)
-        # print(signal_data)
-        execute_trade(signal_data, coin_list)
+        signal_data = analyze_with_deepseek_with_retry(price_data)
+        execute_trade(signal_data, price_data)
     finally:
         loop_finished_at = datetime.now(UTC)
         try:
@@ -1014,7 +1357,7 @@ def run_trading_loop(stop_event: threading.Event) -> None:
 
 
 def get_fact_amount(symbol, notional, leverage, price):
-    mark = exchange.exchange.load_markets()
+    mark = exchange.load_markets()
     contract_size = mark[symbol]['contractSize']
     # 计算张数
     position_value = notional * leverage            # 总名义价值
@@ -1032,6 +1375,10 @@ def get_fact_amount(symbol, notional, leverage, price):
 def main():
     """主函数"""
     global RUN_ID, start_time, minutes_elapsed, iteration_counter, start_time_seeded, initial_equity_value
+    
+    prompt = exchange.generate_analysis_prompt('BTC/USDT:USDT')
+    
+    print(prompt)
     
     
     database.initialize()
@@ -1070,14 +1417,14 @@ def main():
 
     logger.info(f"OKX自动交易机器人启动成功！")
     logger.info("融合技术指标策略 + OKX实盘接口")
-    # logger.info(f"交易周期: {TRADE_CONFIG['timeframe']}")
+    logger.info(f"交易周期: {TRADE_CONFIG['timeframe']}")
     logger.info("已启用完整技术指标分析和持仓跟踪功能")
 
     for coin in coin_list:
         coin_logger = get_coin_logger(coin)
         coin_logger.info("=" * 60)
         coin_logger.info(f"代币：{coin}")
-        # coin_logger.info(f"交易周期: {TRADE_CONFIG['timeframe']}")
+        coin_logger.info(f"交易周期: {TRADE_CONFIG['timeframe']}")
         coin_logger.info("已启用完整技术指标分析和持仓跟踪功能")
         coin_logger.info("=" * 60)
 
