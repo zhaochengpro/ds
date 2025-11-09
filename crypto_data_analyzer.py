@@ -2340,7 +2340,7 @@ class AdvancedMultiCryptoAnalyzer:
         prompt += "\n## 当前持仓\n"
         if positions and len(positions) > 0:
             for pos in positions:
-                prompt += f"""- 币种：{pos['symbol']}
+                prompt += f"""- 币种：{pos['symbol'].split('/')[0]}
   * 方向：{'多单' if pos['side'] == 'long' else '空单'}
   * 开仓价格：{pos['entry_price']}
   * 当前盈亏：{pos['unrealized_pnl']} USDT

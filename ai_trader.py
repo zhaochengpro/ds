@@ -674,13 +674,15 @@ def execute_trade(signal_data, symbols):
         coin_logger.info(f"=" * 60)
         coin_logger.info(f"代币：{coin}")
         
+        # print(exchange.analysis_results)
+        
         coin_info = exchange.analysis_results[coin]
         
         print(float(coin_info['current_price']), coin)
         
         price_snapshot = float(coin_info['current_price'])
         current_position = {}
-        print(pos_obj, coin)
+        # print(pos_obj, coin)
         for pos in pos_obj:
             if pos['symbol'] == f"{coin}/USDT:USDT":
                 current_position = pos
@@ -768,11 +770,11 @@ def execute_trade(signal_data, symbols):
                 continue
 
             if current_position:
-                pos_tp = float(current_position.get('tp', 0))
+                # pos_tp = float(current_position.get('tp', 0))
                 pos_sl = float(current_position.get('sl', 0))
                 algo_amount = float(current_position.get('algoAmount', 0))
             else:
-                pos_tp = 0
+                # pos_tp = 0
                 pos_sl = 0
                 algo_amount = 0
 
@@ -784,7 +786,7 @@ def execute_trade(signal_data, symbols):
                     f"当前持仓 | {summarize_position_entry(coin, current_position)}"
                 )
                 coin_logger.info(
-                    f"目标调整 | 止盈 {pos_tp:.2f} -> {tp:.2f} | 止损 {pos_sl:.2f} -> {sl:.2f}"
+                    f"目标调整 | 止损 {pos_sl:.2f} -> {sl:.2f}"
                 )
             else:
                 coin_logger.info(
