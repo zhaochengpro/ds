@@ -721,41 +721,19 @@ class AdvancedMultiCryptoAnalyzer:
         # 检查TA-Lib中是否有蜡烛图形态识别函数
         try:
             # 尝试使用TA-Lib的蜡烛图形态识别函数
-            if 'CDLDOJI' in self.talib_functions:
-                patterns['doji'] = talib.CDLDOJI(df['open'], df['high'], df['low'], df['close'])
-            
-            if 'CDLENGULFING' in self.talib_functions:
-                patterns['engulfing'] = talib.CDLENGULFING(df['open'], df['high'], df['low'], df['close'])
-            
-            if 'CDLHAMMER' in self.talib_functions:
-                patterns['hammer'] = talib.CDLHAMMER(df['open'], df['high'], df['low'], df['close'])
-            
-            if 'CDLHANGINGMAN' in self.talib_functions:
-                patterns['hanging_man'] = talib.CDLHANGINGMAN(df['open'], df['high'], df['low'], df['close'])
-            
-            if 'CDLSHOOTINGSTAR' in self.talib_functions:
-                patterns['shooting_star'] = talib.CDLSHOOTINGSTAR(df['open'], df['high'], df['low'], df['close'])
-            
-            if 'CDLMORNINGSTAR' in self.talib_functions:
-                patterns['morning_star'] = talib.CDLMORNINGSTAR(df['open'], df['high'], df['low'], df['close'], penetration=0)
-            
-            if 'CDLEVENINGSTAR' in self.talib_functions:
-                patterns['evening_star'] = talib.CDLEVENINGSTAR(df['open'], df['high'], df['low'], df['close'], penetration=0)
-            
-            if 'CDL3WHITESOLDIERS' in self.talib_functions:
-                patterns['three_white_soldiers'] = talib.CDL3WHITESOLDIERS(df['open'], df['high'], df['low'], df['close'])
-            
-            if 'CDL3BLACKCROWS' in self.talib_functions:
-                patterns['three_black_crows'] = talib.CDL3BLACKCROWS(df['open'], df['high'], df['low'], df['close'])
-            
-            if 'CDLHARAMI' in self.talib_functions:
-                patterns['harami'] = talib.CDLHARAMI(df['open'], df['high'], df['low'], df['close'])
-            
-            if 'CDLPIERCING' in self.talib_functions:
-                patterns['piercing'] = talib.CDLPIERCING(df['open'], df['high'], df['low'], df['close'])
-            
-            if 'CDLDARKCLOUDCOVER' in self.talib_functions:
-                patterns['dark_cloud_cover'] = talib.CDLDARKCLOUDCOVER(df['open'], df['high'], df['low'], df['close'], penetration=0)
+        
+            patterns['doji'] = talib.CDLDOJI(df['open'], df['high'], df['low'], df['close'])
+            patterns['engulfing'] = talib.CDLENGULFING(df['open'], df['high'], df['low'], df['close'])        
+            patterns['hammer'] = talib.CDLHAMMER(df['open'], df['high'], df['low'], df['close'])
+            patterns['hanging_man'] = talib.CDLHANGINGMAN(df['open'], df['high'], df['low'], df['close'])
+            patterns['shooting_star'] = talib.CDLSHOOTINGSTAR(df['open'], df['high'], df['low'], df['close'])
+            patterns['morning_star'] = talib.CDLMORNINGSTAR(df['open'], df['high'], df['low'], df['close'], penetration=0)
+            patterns['evening_star'] = talib.CDLEVENINGSTAR(df['open'], df['high'], df['low'], df['close'], penetration=0)
+            patterns['three_white_soldiers'] = talib.CDL3WHITESOLDIERS(df['open'], df['high'], df['low'], df['close'])
+            patterns['three_black_crows'] = talib.CDL3BLACKCROWS(df['open'], df['high'], df['low'], df['close'])
+            patterns['harami'] = talib.CDLHARAMI(df['open'], df['high'], df['low'], df['close'])
+            patterns['piercing'] = talib.CDLPIERCING(df['open'], df['high'], df['low'], df['close'])
+            patterns['dark_cloud_cover'] = talib.CDLDARKCLOUDCOVER(df['open'], df['high'], df['low'], df['close'], penetration=0)
         
         except Exception as e:
             print(f"蜡烛图形态识别出错: {e}")
