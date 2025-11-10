@@ -420,7 +420,7 @@ def analyze_with_deepseek(symbols):
         }}}}
         """
         
-        user_prompt_content = exchange.generate_multi_coin_analysis_prompt(symbols)
+        user_prompt_content = exchange.generate_multi_coin_analysis_prompt(symbols, logger=logger)
         print(user_prompt_content)
         chat_messages = [
             {"role": "system", "content": system_prompt_content},
@@ -674,15 +674,11 @@ def execute_trade(signal_data, symbols):
         coin_logger.info(f"=" * 60)
         coin_logger.info(f"代币：{coin}")
         
-        # print(exchange.analysis_results)
         
         coin_info = exchange.analysis_results[coin]
         
-        print(float(coin_info['current_price']), coin)
-        
         price_snapshot = float(coin_info['current_price'])
         current_position = {}
-        # print(pos_obj, coin)
         for pos in pos_obj:
             if pos['symbol'] == f"{coin}/USDT:USDT":
                 current_position = pos

@@ -55,13 +55,6 @@ class AdvancedMultiCryptoAnalyzer:
         self.momentum_ranking = None
         self.exchange.httpsProxy = os.getenv('https_proxy')
         
-        # 检查TA-Lib可用函数
-        self.check_talib_functions()
-    
-    def check_talib_functions(self):
-        """检查TA-Lib中可用的函数"""
-        self.talib_functions = dir(talib)
-        print(f"TA-Lib 版本检查完成，可用函数数量: {len(self.talib_functions)}")
     
     def fetch_ohlcv_data(self, symbol, timeframe, limit=100):
         """
@@ -89,7 +82,7 @@ class AdvancedMultiCryptoAnalyzer:
             return df
         except Exception as e:
             print(f"获取{symbol} {timeframe}数据时出错: {e}")
-            return None
+            raise e
     
     def calculate_technical_indicators(self, df):
         """
@@ -888,6 +881,7 @@ class AdvancedMultiCryptoAnalyzer:
         except Exception as e:
             print(f"获取{symbol}资金费率时出错: {e}")
             market_data['funding_rate'] = None
+            raise e
         
         try:
             # 获取24小时价格变化
@@ -898,6 +892,7 @@ class AdvancedMultiCryptoAnalyzer:
             print(f"获取{symbol}24小时价格变化时出错: {e}")
             market_data['price_change_24h'] = None
             market_data['volume_24h'] = None
+            raise e
         
         try:
             # 获取未平仓合约数量
@@ -911,10 +906,11 @@ class AdvancedMultiCryptoAnalyzer:
             print(f"获取{symbol}未平仓合约数量时出错: {e}")
             market_data['open_interest'] = None
             market_data['open_interest_change'] = None
+            raise e
         
         return market_data
     
-    def analyze_single_symbol(self, symbol):
+    def analyze_single_symbol(self, symbol, max_retries=50):
         """
         分析单个交易对
         
@@ -924,6 +920,7 @@ class AdvancedMultiCryptoAnalyzer:
         返回:
         dict: 分析结果
         """
+    
         print(f"正在分析 {symbol}...")
         
         # 获取1小时和4小时数据
@@ -2275,7 +2272,7 @@ class AdvancedMultiCryptoAnalyzer:
             'reserve': reserve
         }
     
-    def generate_multi_coin_analysis_prompt(self, symbols, include_correlation=True):
+    def generate_multi_coin_analysis_prompt(self, symbols, include_correlation=True, max_retries=50, logger=None):
         """
         生成多币种分析提示
         
@@ -2286,220 +2283,230 @@ class AdvancedMultiCryptoAnalyzer:
         返回:
         str: 格式化的分析提示
         """
-        # 分析指定的币种
-        self.analyze_multiple_symbols(symbols)
         
-        # 如果需要，计算相关性矩阵
-        if include_correlation:
-            self.calculate_correlation_matrix()
-        
-        # 分析市场状态
-        market_state = self.analyze_market_state()
-        
-        # 获取波动性排名
-        volatility_ranking = self.rank_by_volatility()
-        
-        # 获取动量排名
-        momentum_ranking = self.rank_by_momentum()
-        
-        # 获取交易机会排名
-        opportunities = self.rank_trading_opportunities()
-        
-        # 建议投资组合分配
-        portfolio_allocation = self.suggest_portfolio_allocation(opportunities)
-        
-        # 获取账户信息
-        account_info = self.get_account_info()
-        positions = self.get_positions(symbols)
-        
-        # 生成提示
-        prompt = f"""# 用户提示词：多币种加密货币合约交易分析
-
-请根据以下市场数据分析多个加密货币的市场状况，并提供基于1小时和4小时时间框架的合约交易建议。我需要一个全面的市场分析和明确的交易决策。
-
-## 分析时间
-- 当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-## 市场整体状态
-- 市场状态：{market_state['state']}
-- 平均技术评分：{market_state['avg_technical_score']:.2f}
-- 主导趋势：{market_state['dominant_trend']} ({market_state['trend_distribution'][market_state['dominant_trend']]:.1f}%)
-- 波动性状态：{market_state['volatility_state']} (平均ATR百分比: {market_state['avg_volatility']:.2f}%)
-
-## 账户信息
-"""
-
-        if account_info:
-            prompt += f"""- 账户总值：{account_info['total_value']} USDT
-- 可用保证金：{account_info['free_margin']} USDT
-"""
-        else:
-            prompt += "- 账户信息不可用\n"
-
-        # 添加持仓信息
-        prompt += "\n## 当前持仓\n"
-        if positions and len(positions) > 0:
-            for pos in positions:
-                prompt += f"""- 币种：{pos['symbol'].split('/')[0]}
-  * 方向：{'多单' if pos['side'] == 'long' else '空单'}
-  * 开仓价格：{pos['entry_price']}
-  * 当前盈亏：{pos['unrealized_pnl']} USDT
-  * 杠杆倍数：{pos['leverage']}
-  * 清算价格：{pos['liquidation_price']}
-"""
-        else:
-            prompt += "- 当前无持仓\n"
-
-        # 添加相关性矩阵信息
-        if include_correlation and self.correlation_matrix is not None:
-            prompt += "\n## 币种相关性分析\n"
-            prompt += "以下是主要币种之间的相关性（1表示完全正相关，-1表示完全负相关）：\n\n"
-            
-            # 格式化相关性矩阵（选择主要币种）
-            main_coins = [s for s in symbols if 'BTC' in s or 'ETH' in s][:5]  # 限制数量
-            if main_coins:
-                matrix = self.correlation_matrix.loc[main_coins, main_coins].round(2)
-                prompt += f"{matrix.to_string()}\n\n"
-            
-            prompt += "交易建议应考虑币种相关性，避免同时持有高度相关的同向头寸。\n"
-
-        # 添加波动性排名
-        prompt += "\n## 波动性排名（前5名）\n"
-        if volatility_ranking:
-            for i, coin in enumerate(volatility_ranking[:5], 1):
-                prompt += f"{i}. {coin['symbol']} - ATR百分比: {coin['atr_percent']:.2f}%, 波动性评级: {coin['volatility_rating']}\n"
-        else:
-            prompt += "波动性排名不可用\n"
-
-        # 添加动量排名
-        prompt += "\n## 动量排名（前5名）\n"
-        if momentum_ranking:
-            for i, coin in enumerate(momentum_ranking[:5], 1):
-                prompt += f"{i}. {coin['symbol']} - 技术评分: {coin['technical_score']:.2f}, RSI: {coin['rsi_14']:.2f}, 24h变化: {coin['price_change_24h']:.2f}%\n"
-        else:
-            prompt += "动量排名不可用\n"
-
-        # 添加交易机会排名
-        prompt += "\n## 交易机会排名\n"
-        if opportunities:
-            prompt += "根据技术分析评分、趋势一致性和风险回报比，以下是排名靠前的交易机会：\n\n"
-            
-            for i, opp in enumerate(opportunities[:5], 1):  # 限制显示前5个
-                prompt += f"{i}. {opp['symbol']} - {opp['action']} (信心: {opp['confidence']:.2f})\n"
-                prompt += f"   * 当前价格: {opp['current_price']}\n"
-                prompt += f"   * 止损价格: {opp['stop_loss']}\n"
-                prompt += f"   * 目标价格: {', '.join([str(t) for t in opp['targets']])}\n"
-                prompt += f"   * 风险回报比: 1:{opp['risk_reward']:.2f}\n"
-                prompt += f"   * 1小时趋势: {opp['trend_1h']}\n"
-                prompt += f"   * 4小时趋势: {opp['trend_4h']}\n"
-                prompt += f"   * 趋势一致性: {opp['consistency']}\n"
-                prompt += f"   * 信号原因: {', '.join(opp['reasons'][:3])}\n\n"
-        else:
-            prompt += "当前没有符合条件的高质量交易机会。\n"
-
-        # 添加投资组合分配建议
-        prompt += "\n## 投资组合分配建议\n"
-        if portfolio_allocation['allocations']:
-            prompt += f"建议总资金分配: {portfolio_allocation['total_allocation']*100:.1f}%，保留资金: {portfolio_allocation['reserve']*100:.1f}%\n\n"
-            
-            for alloc in portfolio_allocation['allocations']:
-                prompt += f"- {alloc['symbol']} ({alloc['action']}): 账户资金的 {alloc['allocation']*100:.1f}%\n"
-        else:
-            prompt += "当前没有推荐的资金分配。\n"
-
-        # 为每个币种添加详细数据
-        prompt += "\n## 各币种详细数据\n"
-        
-        for symbol in symbols:
-            if symbol in self.analysis_results:
-                data = self.analysis_results[symbol]
+        for attempt in range(max_retries):
+            try:
+                # 分析指定的币种
+                self.analyze_multiple_symbols(symbols)
                 
-                prompt += f"\n### {symbol}\n"
-                prompt += f"- 当前价格：{data['current_price']}\n"
-                prompt += f"- 技术评分：{data['technical_score']:.1f} (正值=看涨，负值=看跌)\n"
-                prompt += f"- 交易信号：{data['trading_signals']['recommendation']} (信心: {data['trading_signals']['confidence']:.2f})\n"
-                prompt += f"- 1小时趋势：{data['trend_analysis']['1h_trend']} ({data['trend_analysis']['1h_strength']})\n"
-                prompt += f"- 4小时趋势：{data['trend_analysis']['4h_trend']} ({data['trend_analysis']['4h_strength']})\n"
-                prompt += f"- 趋势一致性：{data['trend_analysis']['consistency']}\n"
+                # 如果需要，计算相关性矩阵
+                if include_correlation:
+                    self.calculate_correlation_matrix()
                 
-                # 添加背离信息
-                div_analysis = data['divergence_analysis']
-                if div_analysis['strength'] != "无":
-                    prompt += f"- 背离：{div_analysis['strength']}\n"
+                # 分析市场状态
+                market_state = self.analyze_market_state()
                 
-                # 添加波动性信息
-                vol_analysis = data['volatility_analysis']
-                prompt += f"- 波动性：{vol_analysis['rating']} (ATR百分比: {vol_analysis['4h']['atr_percent']:.2f}%)\n"
+                # 获取波动性排名
+                volatility_ranking = self.rank_by_volatility()
                 
-                # 添加市场结构
-                market_struct = data['market_structure']
-                prompt += f"- 市场结构：1小时={market_struct['1h']['structure']}, 4小时={market_struct['4h']['structure']}\n"
+                # 获取动量排名
+                momentum_ranking = self.rank_by_momentum()
                 
-                prompt += "\n#### 4小时图表数据\n"
-                prompt += f"- EMA数据：20 EMA = {data['4h_data']['ema']['20']:.2f}, 50 EMA = {data['4h_data']['ema']['50']:.2f}, 200 EMA = {data['4h_data']['ema']['200']:.2f}\n"
-                prompt += f"- RSI(14)：{data['4h_data']['rsi']['14']:.2f}\n"
-                prompt += f"- MACD：线 = {data['4h_data']['macd']['line']:.6f}, 信号 = {data['4h_data']['macd']['signal']:.6f}, 柱状图 = {data['4h_data']['macd']['histogram']:.6f}\n"
-                prompt += f"- 随机指标：K = {data['4h_data']['stochastic']['k']:.2f}, D = {data['4h_data']['stochastic']['d']:.2f}\n"
-                prompt += f"- ADX：{data['4h_data']['adx']:.2f} (DI+ = {data['4h_data']['plus_di']:.2f}, DI- = {data['4h_data']['minus_di']:.2f})\n"
-                prompt += f"- 布林带：中轨 = {data['4h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['4h_data']['bollinger_bands']['width']:.4f}\n"
-                prompt += f"- 超级趋势：方向 = {data['trend_analysis']['4h_supertrend']}\n"
-                prompt += f"- 支撑位：{data['4h_data']['support_levels']}\n"
-                prompt += f"- 阻力位：{data['4h_data']['resistance_levels']}\n"
+                # 获取交易机会排名
+                opportunities = self.rank_trading_opportunities()
                 
-                prompt += "\n#### 1小时图表数据\n"
-                prompt += f"- EMA数据：20 EMA = {data['1h_data']['ema']['20']:.2f}, 50 EMA = {data['1h_data']['ema']['50']:.2f}, 200 EMA = {data['1h_data']['ema']['200']:.2f}\n"
-                prompt += f"- RSI(14)：{data['1h_data']['rsi']['14']:.2f}\n"
-                prompt += f"- MACD：线 = {data['1h_data']['macd']['line']:.6f}, 信号 = {data['1h_data']['macd']['signal']:.6f}, 柱状图 = {data['1h_data']['macd']['histogram']:.6f}\n"
-                prompt += f"- 随机指标：K = {data['1h_data']['stochastic']['k']:.2f}, D = {data['1h_data']['stochastic']['d']:.2f}\n"
-                prompt += f"- ADX：{data['1h_data']['adx']:.2f} (DI+ = {data['1h_data']['plus_di']:.2f}, DI- = {data['1h_data']['minus_di']:.2f})\n"
-                prompt += f"- 布林带：中轨 = {data['1h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['1h_data']['bollinger_bands']['width']:.4f}\n"
-                prompt += f"- 超级趋势：方向 = {data['trend_analysis']['1h_supertrend']}\n"
-                prompt += f"- 支撑位：{data['1h_data']['support_levels']}\n"
-                prompt += f"- 阻力位：{data['1h_data']['resistance_levels']}\n"
+                # 建议投资组合分配
+                portfolio_allocation = self.suggest_portfolio_allocation(opportunities)
                 
-                prompt += "\n#### 市场数据\n"
-                prompt += f"- 资金费率：{data['market_data']['funding_rate']}\n"
-                prompt += f"- 24小时价格变化：{data['market_data']['price_change_24h']}%\n"
-                prompt += f"- 24小时成交量：{data['market_data']['volume_24h']} USDT\n"
-                if data['market_data']['open_interest']:
-                    prompt += f"- 未平仓合约：{data['market_data']['open_interest']} USDT\n"
+                # 获取账户信息
+                account_info = self.get_account_info()
+                positions = self.get_positions(symbols)
+                
+                # 生成提示
+                prompt = f"""# 用户提示词：多币种加密货币合约交易分析
+
+                请根据以下市场数据分析多个加密货币的市场状况，并提供基于1小时和4小时时间框架的合约交易建议。我需要一个全面的市场分析和明确的交易决策。
+
+                ## 分析时间
+                - 当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+                ## 市场整体状态
+                - 市场状态：{market_state['state']}
+                - 平均技术评分：{market_state['avg_technical_score']:.2f}
+                - 主导趋势：{market_state['dominant_trend']} ({market_state['trend_distribution'][market_state['dominant_trend']]:.1f}%)
+                - 波动性状态：{market_state['volatility_state']} (平均ATR百分比: {market_state['avg_volatility']:.2f}%)
+
+                ## 账户信息
+                """
+
+                if account_info:
+                    prompt += f"""- 账户总值：{account_info['total_value']} USDT
+                    - 可用保证金：{account_info['free_margin']} USDT
+                    """
+                else:
+                    prompt += "- 账户信息不可用\n"
+
+                # 添加持仓信息
+                prompt += "\n## 当前持仓\n"
+                if positions and len(positions) > 0:
+                    for pos in positions:
+                        prompt += f"""- 币种：{pos['symbol'].split('/')[0]}
+                * 方向：{'多单' if pos['side'] == 'long' else '空单'}
+                * 开仓价格：{pos['entry_price']}
+                * 当前盈亏：{pos['unrealized_pnl']} USDT
+                * 杠杆倍数：{pos['leverage']}
+                * 清算价格：{pos['liquidation_price']}
+                """
+                else:
+                    prompt += "- 当前无持仓\n"
+
+                # 添加相关性矩阵信息
+                if include_correlation and self.correlation_matrix is not None:
+                    prompt += "\n## 币种相关性分析\n"
+                    prompt += "以下是主要币种之间的相关性（1表示完全正相关，-1表示完全负相关）：\n\n"
+                    
+                    # 格式化相关性矩阵（选择主要币种）
+                    main_coins = [s for s in symbols if 'BTC' in s or 'ETH' in s][:5]  # 限制数量
+                    if main_coins:
+                        matrix = self.correlation_matrix.loc[main_coins, main_coins].round(2)
+                        prompt += f"{matrix.to_string()}\n\n"
+                    
+                    prompt += "交易建议应考虑币种相关性，避免同时持有高度相关的同向头寸。\n"
+
+                # 添加波动性排名
+                prompt += "\n## 波动性排名（前5名）\n"
+                if volatility_ranking:
+                    for i, coin in enumerate(volatility_ranking[:5], 1):
+                        prompt += f"{i}. {coin['symbol']} - ATR百分比: {coin['atr_percent']:.2f}%, 波动性评级: {coin['volatility_rating']}\n"
+                else:
+                    prompt += "波动性排名不可用\n"
+
+                # 添加动量排名
+                prompt += "\n## 动量排名（前5名）\n"
+                if momentum_ranking:
+                    for i, coin in enumerate(momentum_ranking[:5], 1):
+                        prompt += f"{i}. {coin['symbol']} - 技术评分: {coin['technical_score']:.2f}, RSI: {coin['rsi_14']:.2f}, 24h变化: {coin['price_change_24h']:.2f}%\n"
+                else:
+                    prompt += "动量排名不可用\n"
+
+                # 添加交易机会排名
+                prompt += "\n## 交易机会排名\n"
+                if opportunities:
+                    prompt += "根据技术分析评分、趋势一致性和风险回报比，以下是排名靠前的交易机会：\n\n"
+                    
+                    for i, opp in enumerate(opportunities[:5], 1):  # 限制显示前5个
+                        prompt += f"{i}. {opp['symbol']} - {opp['action']} (信心: {opp['confidence']:.2f})\n"
+                        prompt += f"   * 当前价格: {opp['current_price']}\n"
+                        prompt += f"   * 止损价格: {opp['stop_loss']}\n"
+                        prompt += f"   * 目标价格: {', '.join([str(t) for t in opp['targets']])}\n"
+                        prompt += f"   * 风险回报比: 1:{opp['risk_reward']:.2f}\n"
+                        prompt += f"   * 1小时趋势: {opp['trend_1h']}\n"
+                        prompt += f"   * 4小时趋势: {opp['trend_4h']}\n"
+                        prompt += f"   * 趋势一致性: {opp['consistency']}\n"
+                        prompt += f"   * 信号原因: {', '.join(opp['reasons'][:3])}\n\n"
+                else:
+                    prompt += "当前没有符合条件的高质量交易机会。\n"
+
+                # 添加投资组合分配建议
+                prompt += "\n## 投资组合分配建议\n"
+                if portfolio_allocation['allocations']:
+                    prompt += f"建议总资金分配: {portfolio_allocation['total_allocation']*100:.1f}%，保留资金: {portfolio_allocation['reserve']*100:.1f}%\n\n"
+                    
+                    for alloc in portfolio_allocation['allocations']:
+                        prompt += f"- {alloc['symbol']} ({alloc['action']}): 账户资金的 {alloc['allocation']*100:.1f}%\n"
+                else:
+                    prompt += "当前没有推荐的资金分配。\n"
+
+                # 为每个币种添加详细数据
+                prompt += "\n## 各币种详细数据\n"
+                
+                for symbol in symbols:
+                    if symbol in self.analysis_results:
+                        data = self.analysis_results[symbol]
+                        
+                        prompt += f"\n### {symbol}\n"
+                        prompt += f"- 当前价格：{data['current_price']}\n"
+                        prompt += f"- 技术评分：{data['technical_score']:.1f} (正值=看涨，负值=看跌)\n"
+                        prompt += f"- 交易信号：{data['trading_signals']['recommendation']} (信心: {data['trading_signals']['confidence']:.2f})\n"
+                        prompt += f"- 1小时趋势：{data['trend_analysis']['1h_trend']} ({data['trend_analysis']['1h_strength']})\n"
+                        prompt += f"- 4小时趋势：{data['trend_analysis']['4h_trend']} ({data['trend_analysis']['4h_strength']})\n"
+                        prompt += f"- 趋势一致性：{data['trend_analysis']['consistency']}\n"
+                        
+                        # 添加背离信息
+                        div_analysis = data['divergence_analysis']
+                        if div_analysis['strength'] != "无":
+                            prompt += f"- 背离：{div_analysis['strength']}\n"
+                        
+                        # 添加波动性信息
+                        vol_analysis = data['volatility_analysis']
+                        prompt += f"- 波动性：{vol_analysis['rating']} (ATR百分比: {vol_analysis['4h']['atr_percent']:.2f}%)\n"
+                        
+                        # 添加市场结构
+                        market_struct = data['market_structure']
+                        prompt += f"- 市场结构：1小时={market_struct['1h']['structure']}, 4小时={market_struct['4h']['structure']}\n"
+                        
+                        prompt += "\n#### 4小时图表数据\n"
+                        prompt += f"- EMA数据：20 EMA = {data['4h_data']['ema']['20']:.2f}, 50 EMA = {data['4h_data']['ema']['50']:.2f}, 200 EMA = {data['4h_data']['ema']['200']:.2f}\n"
+                        prompt += f"- RSI(14)：{data['4h_data']['rsi']['14']:.2f}\n"
+                        prompt += f"- MACD：线 = {data['4h_data']['macd']['line']:.6f}, 信号 = {data['4h_data']['macd']['signal']:.6f}, 柱状图 = {data['4h_data']['macd']['histogram']:.6f}\n"
+                        prompt += f"- 随机指标：K = {data['4h_data']['stochastic']['k']:.2f}, D = {data['4h_data']['stochastic']['d']:.2f}\n"
+                        prompt += f"- ADX：{data['4h_data']['adx']:.2f} (DI+ = {data['4h_data']['plus_di']:.2f}, DI- = {data['4h_data']['minus_di']:.2f})\n"
+                        prompt += f"- 布林带：中轨 = {data['4h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['4h_data']['bollinger_bands']['width']:.4f}\n"
+                        prompt += f"- 超级趋势：方向 = {data['trend_analysis']['4h_supertrend']}\n"
+                        prompt += f"- 支撑位：{data['4h_data']['support_levels']}\n"
+                        prompt += f"- 阻力位：{data['4h_data']['resistance_levels']}\n"
+                        
+                        prompt += "\n#### 1小时图表数据\n"
+                        prompt += f"- EMA数据：20 EMA = {data['1h_data']['ema']['20']:.2f}, 50 EMA = {data['1h_data']['ema']['50']:.2f}, 200 EMA = {data['1h_data']['ema']['200']:.2f}\n"
+                        prompt += f"- RSI(14)：{data['1h_data']['rsi']['14']:.2f}\n"
+                        prompt += f"- MACD：线 = {data['1h_data']['macd']['line']:.6f}, 信号 = {data['1h_data']['macd']['signal']:.6f}, 柱状图 = {data['1h_data']['macd']['histogram']:.6f}\n"
+                        prompt += f"- 随机指标：K = {data['1h_data']['stochastic']['k']:.2f}, D = {data['1h_data']['stochastic']['d']:.2f}\n"
+                        prompt += f"- ADX：{data['1h_data']['adx']:.2f} (DI+ = {data['1h_data']['plus_di']:.2f}, DI- = {data['1h_data']['minus_di']:.2f})\n"
+                        prompt += f"- 布林带：中轨 = {data['1h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['1h_data']['bollinger_bands']['width']:.4f}\n"
+                        prompt += f"- 超级趋势：方向 = {data['trend_analysis']['1h_supertrend']}\n"
+                        prompt += f"- 支撑位：{data['1h_data']['support_levels']}\n"
+                        prompt += f"- 阻力位：{data['1h_data']['resistance_levels']}\n"
+                        
+                        prompt += "\n#### 市场数据\n"
+                        prompt += f"- 资金费率：{data['market_data']['funding_rate']}\n"
+                        prompt += f"- 24小时价格变化：{data['market_data']['price_change_24h']}%\n"
+                        prompt += f"- 24小时成交量：{data['market_data']['volume_24h']} USDT\n"
+                        if data['market_data']['open_interest']:
+                            prompt += f"- 未平仓合约：{data['market_data']['open_interest']} USDT\n"
+                
+                # 添加分析需求
+                prompt += f"""
+                ## 需要的分析内容
+
+                请基于上述数据提供以下分析：
+                **注意：分析结果不作为输出内容
+                1. **市场整体分析**：
+                - 主要币种的市场结构和趋势
+                - 币种之间的相关性分析及其交易影响
+                - 整体市场情绪评估
+
+                2. **个别币种分析**：
+                - 对每个币种的技术指标和市场结构进行解读
+                - 识别最佳交易机会和应避免的币种
+                - 关键支撑位和阻力位的重要性
+
+                3. **投资组合建议**：
+                - 建议的资金分配比例
+                - 多元化策略和相关性管理
+                - 总体风险敞口控制
+
+                4. **具体交易决策**：
+                - 为每个推荐的交易提供明确的行动建议（开多/开空/平多/平空/持仓/等待）
+                - 提供具体的入场区域、止损位和目标位
+                - 如有现有仓位，提供持仓管理建议
+
+                5. **风险管理**：
+                - 每个交易的建议仓位规模（账户百分比）
+                - 建议的杠杆倍数
+                - 风险回报比计算
+                - 投资组合级别的风险控制
+
+                6. **执行优先级**：
+                - 交易执行的优先顺序
+                - 时间敏感度评估
+                - 建议的观察周期
+                """
+
+                return prompt
+            except Exception as e:
+                logger.warning(f"第{attempt + 1}次尝试异常: {e}")
+                if attempt == max_retries - 1:
+                    break
+                time.sleep(1)
+                
         
-        # 添加分析需求
-        prompt += f"""
-## 需要的分析内容
-
-请基于上述数据提供以下分析：
-**注意：分析结果不作为输出内容
-1. **市场整体分析**：
-   - 主要币种的市场结构和趋势
-   - 币种之间的相关性分析及其交易影响
-   - 整体市场情绪评估
-
-2. **个别币种分析**：
-   - 对每个币种的技术指标和市场结构进行解读
-   - 识别最佳交易机会和应避免的币种
-   - 关键支撑位和阻力位的重要性
-
-3. **投资组合建议**：
-   - 建议的资金分配比例
-   - 多元化策略和相关性管理
-   - 总体风险敞口控制
-
-4. **具体交易决策**：
-   - 为每个推荐的交易提供明确的行动建议（开多/开空/平多/平空/持仓/等待）
-   - 提供具体的入场区域、止损位和目标位
-   - 如有现有仓位，提供持仓管理建议
-
-5. **风险管理**：
-   - 每个交易的建议仓位规模（账户百分比）
-   - 建议的杠杆倍数
-   - 风险回报比计算
-   - 投资组合级别的风险控制
-
-6. **执行优先级**：
-   - 交易执行的优先顺序
-   - 时间敏感度评估
-   - 建议的观察周期
-"""
-
-        return prompt
