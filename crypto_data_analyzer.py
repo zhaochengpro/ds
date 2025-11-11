@@ -2342,7 +2342,7 @@ class AdvancedMultiCryptoAnalyzer:
                     """
                     
                     # 格式化相关性矩阵（选择主要币种）
-                    main_coins = [s for s in symbols if][:5]  # 限制数量
+                    main_coins = [s for s in symbols][:5]  # 限制数量
                     if main_coins:
                         matrix = self.correlation_matrix.loc[main_coins, main_coins].round(2)
                         prompt += f"""
