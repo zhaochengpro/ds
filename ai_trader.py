@@ -855,7 +855,7 @@ def trading_bot():
 
 def run_trading_loop(stop_event: threading.Event) -> None:
     schedule.clear('trading-loop')
-    schedule.every(15).minutes.do(trading_bot).tag('trading-loop')
+    schedule.every(30).minutes.do(trading_bot).tag('trading-loop')
 
     trading_bot()
 
