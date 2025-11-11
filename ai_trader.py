@@ -148,109 +148,6 @@ price_history = []
 signal_history = {}
 position = None
 last_positions_fingerprint = None
-AI_DECISION_MEMORY = int(os.getenv("AI_DECISION_MEMORY", "10"))
-
-
-def format_recent_ai_decisions(limit=None):
-    """Format recent AI chat/decision history for prompt context."""
-
-    memory_window = limit or AI_DECISION_MEMORY
-    if memory_window <= 0:
-        return ""
-
-    recent_records = []
-    if RUN_ID:
-        try:
-            recent_records = database.fetch_recent_chat_messages(RUN_ID, limit=memory_window)
-        except Exception:
-            recent_records = []
-
-    if recent_records:
-        formatted_lines = []
-        for idx, entry in enumerate(recent_records, start=1):
-            timestamp_obj = entry.get('created_at')
-            timestamp_label = None
-            if isinstance(timestamp_obj, datetime):
-                if timestamp_obj.tzinfo is None:
-                    ts_value = timestamp_obj.replace(tzinfo=timezone.utc)
-                else:
-                    ts_value = timestamp_obj.astimezone(timezone.utc)
-                timestamp_label = ts_value.strftime('%Y-%m-%d %H:%M:%S UTC')
-            elif timestamp_obj:
-                timestamp_label = str(timestamp_obj)
-            else:
-                timestamp_label = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')
-
-            role_label = (entry.get('role') or 'UNKNOWN').upper()
-            message_type = entry.get('message_type') or '-'
-            content_text = re.sub(r"\s+", " ", entry.get('content') or '').strip()
-            if len(content_text) > 200:
-                content_text = content_text[:197] + '...'
-
-            formatted_lines.append(
-                f"{idx}. {timestamp_label} | {role_label} | {message_type} | {content_text}"
-            )
-
-        return "\n".join(formatted_lines)
-
-    # Fallback to in-memory signal history if database history unavailable
-    decision_entries = []
-    for coin_code, history in signal_history.items():
-        for record in history:
-            timestamp_value = record.get('timestamp')
-            timestamp_obj = None
-            if isinstance(timestamp_value, datetime):
-                timestamp_obj = timestamp_value
-            elif isinstance(timestamp_value, str):
-                try:
-                    timestamp_obj = datetime.fromisoformat(timestamp_value)
-                except ValueError:
-                    try:
-                        timestamp_obj = datetime.fromisoformat(timestamp_value.replace('Z', '+00:00'))
-                    except Exception:
-                        timestamp_obj = None
-            if timestamp_obj is None:
-                timestamp_obj = datetime.now(UTC)
-
-            decision_entries.append({
-                'timestamp': timestamp_obj,
-                'coin': coin_code,
-                'signal': record.get('signal', ''),
-                'confidence': record.get('confidence_score') or record.get('confidence'),
-                'profit_target': record.get('take_profit') or record.get('profit_target'),
-                'stop_loss': record.get('stop_loss'),
-                'reason': record.get('reason') or record.get('justification', ''),
-            })
-
-    if not decision_entries:
-        return ""
-
-    decision_entries.sort(key=lambda entry: entry['timestamp'])
-    recent_entries = decision_entries[-memory_window:]
-
-    formatted_lines = []
-    for idx, entry in enumerate(recent_entries, start=1):
-        timestamp_label = entry['timestamp'].strftime('%Y-%m-%d %H:%M:%S UTC')
-        confidence_value = entry['confidence']
-        if isinstance(confidence_value, (int, float)):
-            confidence_text = f"{float(confidence_value):.2f}"
-        else:
-            confidence_text = str(confidence_value or "")
-
-        reason = entry['reason'] or ""
-        reason = re.sub(r"\s+", " ", reason).strip()
-        if len(reason) > 160:
-            reason = reason[:157] + '...'
-
-        profit_target = entry['profit_target'] if entry['profit_target'] is not None else 0.0
-        stop_loss = entry['stop_loss'] if entry['stop_loss'] is not None else 0.0
-
-        formatted_lines.append(
-            f"{idx}. {timestamp_label} | {entry['coin']} | {entry['signal']} | 信心: {confidence_text} | "
-            f"止盈: {profit_target:.4f} | 止损: {stop_loss:.4f} | 理由: {reason}"
-        )
-
-    return "\n".join(formatted_lines)
 
 
 def persist_chat_message(role, content, message_type=None, metadata=None):
@@ -958,7 +855,7 @@ def trading_bot():
 
 def run_trading_loop(stop_event: threading.Event) -> None:
     schedule.clear('trading-loop')
-    schedule.every(3).minutes.do(trading_bot).tag('trading-loop')
+    schedule.every(15).minutes.do(trading_bot).tag('trading-loop')
 
     trading_bot()
 
