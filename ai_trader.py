@@ -553,9 +553,9 @@ def analyze_with_deepseek(symbols):
             logger.debug("数据库写入失败：AI信号", exc_info=True)
 
         return signal_data
-
     except Exception as e:
         logger.exception("DeepSeek分析失败")
+        time.sleep(3)
         # return create_fallback_signal(price_data)
     
 def safe_json_parse(json_str):
@@ -574,50 +574,6 @@ def safe_json_parse(json_str):
             logger.error(f"JSON解析失败，原始内容: {json_str}")
             logger.error(f"错误详情: {e}")
             return None
-
-def create_fallback_signal(price_data):
-    """创建备用交易信号"""
-    fallback_signals = []
-    timestamp = datetime.now(UTC).isoformat()
-    for coin, data in price_data.items():
-        current_price = getattr(data, "current_price", 0.0)
-        fallback_signals.append(
-            {
-                "signal": "HOLD",
-                "coin": coin,
-                "quantity": 0.0,
-                "leverage": 1,
-                "profit_target": 0.0,
-                "stop_loss": 0.0,
-                "invalidation_condition": "Fallback hold due to analysis failure",
-                "confidence": 0.0,
-                "risk_usd": 0.0,
-                "justification": "因分析失败，暂时采取保守策略。",
-                "reason": "因分析失败，暂时采取保守策略。",
-                "take_profit": 0.0,
-                "timestamp": timestamp,
-                "usdt_amount": 0.0,
-                "amount": 0.0,
-                "notional_usd": 0.0,
-                "confidence_score": 0.0,
-                "confidence_label": "LOW",
-                "is_fallback": True,
-                "price_snapshot": current_price,
-            }
-        )
-        fallback_signals[-1]["confidence"] = "LOW"
-
-    try:
-        for signal in fallback_signals:
-            record_strategy_signal(str(signal.get("coin", "")).upper(), signal)
-    except Exception as state_error:
-        logger.debug(f"Dashboard state update failed | fallback strategy | {state_error}")
-    try:
-        database.record_ai_signals(RUN_ID, fallback_signals)
-    except Exception:
-        logger.debug("数据库写入失败：备用信号", exc_info=True)
-
-    return fallback_signals
 
 def get_usdt_balance():
     # 获取账户余额
@@ -894,10 +850,10 @@ def analyze_with_deepseek_with_retry(symbols, max_retries=50):
         except Exception as e:
             logger.warning(f"第{attempt + 1}次尝试异常: {e}")
             if attempt == max_retries - 1:
-                return create_fallback_signal(symbols)
-            time.sleep(1)
+                return None
+            time.sleep(3)
 
-    return create_fallback_signal(symbols)
+    return None
 
 def get_coins_ohlcv_enhanced(coin_list):
     price_data = {}

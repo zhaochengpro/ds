@@ -2291,7 +2291,8 @@ class AdvancedMultiCryptoAnalyzer:
                 positions = self.get_positions(symbols)
                 
                 # 生成提示
-                prompt = f"""# 用户提示词：多币种加密货币合约交易分析
+                prompt = f"""
+                # 用户提示词：多币种加密货币合约交易分析
 
                 请根据以下市场数据分析多个加密货币的市场状况，并提供基于1小时和4小时时间框架的合约交易建议。我需要一个全面的市场分析和明确的交易决策。
 
@@ -2315,132 +2316,264 @@ class AdvancedMultiCryptoAnalyzer:
                     prompt += "- 账户信息不可用\n"
 
                 # 添加持仓信息
-                prompt += "\n## 当前持仓\n"
+                prompt += f"""
+                ## 当前持仓
+                """
                 if positions and len(positions) > 0:
                     for pos in positions:
-                        prompt += f"""- 币种：{pos['symbol'].split('/')[0]}
-                * 方向：{'多单' if pos['side'] == 'long' else '空单'}
-                * 开仓价格：{pos['entry_price']}
-                * 当前盈亏：{pos['unrealized_pnl']} USDT
-                * 杠杆倍数：{pos['leverage']}
-                * 清算价格：{pos['liquidation_price']}
-                """
+                        prompt += f"""
+                        - 币种：{pos['symbol'].split('/')[0]}
+                        * 方向：{'多单' if pos['side'] == 'long' else '空单'}
+                        * 开仓价格：{pos['entry_price']}
+                        * 当前盈亏：{pos['unrealized_pnl']} USDT
+                        * 杠杆倍数：{pos['leverage']}
+                        * 清算价格：{pos['liquidation_price']}
+                        """
                 else:
                     prompt += "- 当前无持仓\n"
 
                 # 添加相关性矩阵信息
                 if include_correlation and self.correlation_matrix is not None:
-                    prompt += "\n## 币种相关性分析\n"
-                    prompt += "以下是主要币种之间的相关性（1表示完全正相关，-1表示完全负相关）：\n\n"
+                    prompt += f"""
+                    ## 币种相关性分析
+                    以下是主要币种之间的相关性（1表示完全正相关，-1表示完全负相关）：
+                    
+                    
+                    """
                     
                     # 格式化相关性矩阵（选择主要币种）
                     main_coins = [s for s in symbols if 'BTC' in s or 'ETH' in s][:5]  # 限制数量
                     if main_coins:
                         matrix = self.correlation_matrix.loc[main_coins, main_coins].round(2)
-                        prompt += f"{matrix.to_string()}\n\n"
+                        prompt += f"""
+                        {matrix.to_string()}
+                        
+                        
+                        """
                     
-                    prompt += "交易建议应考虑币种相关性，避免同时持有高度相关的同向头寸。\n"
+                    prompt += f"""
+                    交易建议应考虑币种相关性，避免同时持有高度相关的同向头寸。
+                    """
 
                 # 添加波动性排名
-                prompt += "\n## 波动性排名（前5名）\n"
+                prompt += f"""
+                ## 波动性排名（前5名）
+                """
                 if volatility_ranking:
                     for i, coin in enumerate(volatility_ranking[:5], 1):
-                        prompt += f"{i}. {coin['symbol']} - ATR百分比: {coin['atr_percent']:.2f}%, 波动性评级: {coin['volatility_rating']}\n"
+                        prompt += f"""
+                        {i}. {coin['symbol']} - ATR百分比: {coin['atr_percent']:.2f}%, 波动性评级: {coin['volatility_rating']}
+                        """
                 else:
-                    prompt += "波动性排名不可用\n"
+                    prompt += f"""
+                    波动性排名不可用
+                    """
 
                 # 添加动量排名
-                prompt += "\n## 动量排名（前5名）\n"
+                prompt += f"""
+                ## 动量排名（前5名）
+                """
                 if momentum_ranking:
                     for i, coin in enumerate(momentum_ranking[:5], 1):
-                        prompt += f"{i}. {coin['symbol']} - 技术评分: {coin['technical_score']:.2f}, RSI: {coin['rsi_14']:.2f}, 24h变化: {coin['price_change_24h']:.2f}%\n"
+                        prompt += f"""
+                        {i}. {coin['symbol']} - 技术评分: {coin['technical_score']:.2f}, RSI: {coin['rsi_14']:.2f}, 24h变化: {coin['price_change_24h']:.2f}%
+                        """
                 else:
-                    prompt += "动量排名不可用\n"
+                    prompt += f"""
+                    动量排名不可用
+                    """
 
                 # 添加交易机会排名
-                prompt += "\n## 交易机会排名\n"
+                prompt += f"""
+                ## 交易机会排名
+                """
                 if opportunities:
-                    prompt += "根据技术分析评分、趋势一致性和风险回报比，以下是排名靠前的交易机会：\n\n"
+                    prompt += f"""
+                    根据技术分析评分、趋势一致性和风险回报比，以下是排名靠前的交易机会：
+                    
+                    """
                     
                     for i, opp in enumerate(opportunities[:5], 1):  # 限制显示前5个
-                        prompt += f"{i}. {opp['symbol']} - {opp['action']} (信心: {opp['confidence']:.2f})\n"
-                        prompt += f"   * 当前价格: {opp['current_price']}\n"
-                        prompt += f"   * 止损价格: {opp['stop_loss']}\n"
-                        prompt += f"   * 目标价格: {', '.join([str(t) for t in opp['targets']])}\n"
-                        prompt += f"   * 风险回报比: 1:{opp['risk_reward']:.2f}\n"
-                        prompt += f"   * 1小时趋势: {opp['trend_1h']}\n"
-                        prompt += f"   * 4小时趋势: {opp['trend_4h']}\n"
-                        prompt += f"   * 趋势一致性: {opp['consistency']}\n"
-                        prompt += f"   * 信号原因: {', '.join(opp['reasons'][:3])}\n\n"
+                        prompt += f"""
+                        {i}. {opp['symbol']} - {opp['action']} (信心: {opp['confidence']:.2f})
+                        """
+                        prompt += f"""
+                            * 当前价格: {opp['current_price']}
+                        """
+                        prompt += f"""   
+                            * 止损价格: {opp['stop_loss']}
+                        """
+                        prompt += f"""
+                            * 目标价格: {', '.join([str(t) for t in opp['targets']])}
+                        """
+                        prompt += f"""   
+                            * 风险回报比: 1:{opp['risk_reward']:.2f}
+                        """
+                        prompt += f"""   
+                            * 1小时趋势: {opp['trend_1h']}
+                        """
+                        prompt += f"""   
+                            * 4小时趋势: {opp['trend_4h']}
+                        """
+                        prompt += f"""   
+                            * 趋势一致性: {opp['consistency']}
+                        """
+                        prompt += f"""   
+                        * 信号原因: {', '.join(opp['reasons'][:3])}
+                        
+                        """
                 else:
-                    prompt += "当前没有符合条件的高质量交易机会。\n"
+                    prompt += f"""
+                    当前没有符合条件的高质量交易机会。
+                    """
 
                 # 添加投资组合分配建议
-                prompt += "\n## 投资组合分配建议\n"
+                prompt += f"""
+                ## 投资组合分配建议
+                """
                 if portfolio_allocation['allocations']:
-                    prompt += f"建议总资金分配: {portfolio_allocation['total_allocation']*100:.1f}%，保留资金: {portfolio_allocation['reserve']*100:.1f}%\n\n"
+                    prompt += f"""
+                    建议总资金分配: {portfolio_allocation['total_allocation']*100:.1f}%，保留资金: {portfolio_allocation['reserve']*100:.1f}%
+                    
+                    """
                     
                     for alloc in portfolio_allocation['allocations']:
-                        prompt += f"- {alloc['symbol']} ({alloc['action']}): 账户资金的 {alloc['allocation']*100:.1f}%\n"
+                        prompt += f"""
+                        - {alloc['symbol']} ({alloc['action']}): 账户资金的 {alloc['allocation']*100:.1f}%
+                        """
                 else:
-                    prompt += "当前没有推荐的资金分配。\n"
+                    prompt += f"""
+                    当前没有推荐的资金分配。
+                    """
 
                 # 为每个币种添加详细数据
-                prompt += "\n## 各币种详细数据\n"
+                prompt += f"""
+                ## 各币种详细数据
+                """
                 
                 for symbol in symbols:
                     if symbol in self.analysis_results:
                         data = self.analysis_results[symbol]
                         
-                        prompt += f"\n### {symbol}\n"
-                        prompt += f"- 当前价格：{data['current_price']}\n"
-                        prompt += f"- 技术评分：{data['technical_score']:.1f} (正值=看涨，负值=看跌)\n"
-                        prompt += f"- 交易信号：{data['trading_signals']['recommendation']} (信心: {data['trading_signals']['confidence']:.2f})\n"
-                        prompt += f"- 1小时趋势：{data['trend_analysis']['1h_trend']} ({data['trend_analysis']['1h_strength']})\n"
-                        prompt += f"- 4小时趋势：{data['trend_analysis']['4h_trend']} ({data['trend_analysis']['4h_strength']})\n"
-                        prompt += f"- 趋势一致性：{data['trend_analysis']['consistency']}\n"
+                        prompt += f"""
+                        ### {symbol}
+                        """
+                        prompt += f"""
+                        - 当前价格：{data['current_price']}
+                        """
+                        prompt += f"""
+                        - 技术评分：{data['technical_score']:.1f} (正值=看涨，负值=看跌)
+                        """
+                        prompt += f"""
+                        - 交易信号：{data['trading_signals']['recommendation']} (信心: {data['trading_signals']['confidence']:.2f})
+                        """
+                        prompt += f"""
+                        - 1小时趋势：{data['trend_analysis']['1h_trend']} ({data['trend_analysis']['1h_strength']})
+                        """
+                        prompt += f"""
+                        - 4小时趋势：{data['trend_analysis']['4h_trend']} ({data['trend_analysis']['4h_strength']})
+                        """
+                        prompt += f"""
+                        - 趋势一致性：{data['trend_analysis']['consistency']}
+                        """
                         
                         # 添加背离信息
                         div_analysis = data['divergence_analysis']
                         if div_analysis['strength'] != "无":
-                            prompt += f"- 背离：{div_analysis['strength']}\n"
+                            prompt += f"""
+                            - 背离：{div_analysis['strength']}
+                            """
                         
                         # 添加波动性信息
                         vol_analysis = data['volatility_analysis']
-                        prompt += f"- 波动性：{vol_analysis['rating']} (ATR百分比: {vol_analysis['4h']['atr_percent']:.2f}%)\n"
+                        prompt += f"""
+                        - 波动性：{vol_analysis['rating']} (ATR百分比: {vol_analysis['4h']['atr_percent']:.2f}%)
+                        """
                         
                         # 添加市场结构
                         market_struct = data['market_structure']
-                        prompt += f"- 市场结构：1小时={market_struct['1h']['structure']}, 4小时={market_struct['4h']['structure']}\n"
+                        prompt += f"""
+                        - 市场结构：1小时={market_struct['1h']['structure']}, 4小时={market_struct['4h']['structure']}
+                        """
                         
-                        prompt += "\n#### 4小时图表数据\n"
-                        prompt += f"- EMA数据：20 EMA = {data['4h_data']['ema']['20']:.2f}, 50 EMA = {data['4h_data']['ema']['50']:.2f}, 200 EMA = {data['4h_data']['ema']['200']:.2f}\n"
-                        prompt += f"- RSI(14)：{data['4h_data']['rsi']['14']:.2f}\n"
-                        prompt += f"- MACD：线 = {data['4h_data']['macd']['line']:.6f}, 信号 = {data['4h_data']['macd']['signal']:.6f}, 柱状图 = {data['4h_data']['macd']['histogram']:.6f}\n"
-                        prompt += f"- 随机指标：K = {data['4h_data']['stochastic']['k']:.2f}, D = {data['4h_data']['stochastic']['d']:.2f}\n"
-                        prompt += f"- ADX：{data['4h_data']['adx']:.2f} (DI+ = {data['4h_data']['plus_di']:.2f}, DI- = {data['4h_data']['minus_di']:.2f})\n"
-                        prompt += f"- 布林带：中轨 = {data['4h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['4h_data']['bollinger_bands']['width']:.4f}\n"
-                        prompt += f"- 超级趋势：方向 = {data['trend_analysis']['4h_supertrend']}\n"
-                        prompt += f"- 支撑位：{data['4h_data']['support_levels']}\n"
-                        prompt += f"- 阻力位：{data['4h_data']['resistance_levels']}\n"
+                        prompt += f"""
+                        #### 4小时图表数据
+                        """
+                        prompt += f"""
+                        - EMA数据：20 EMA = {data['4h_data']['ema']['20']:.2f}, 50 EMA = {data['4h_data']['ema']['50']:.2f}, 200 EMA = {data['4h_data']['ema']['200']:.2f}
+                        """
+                        prompt += f"""
+                        - RSI(14)：{data['4h_data']['rsi']['14']:.2f}
+                        """
+                        prompt += f"""
+                        - MACD：线 = {data['4h_data']['macd']['line']:.6f}, 信号 = {data['4h_data']['macd']['signal']:.6f}, 柱状图 = {data['4h_data']['macd']['histogram']:.6f}
+                        """
+                        prompt += f"""
+                        - 随机指标：K = {data['4h_data']['stochastic']['k']:.2f}, D = {data['4h_data']['stochastic']['d']:.2f}
+                        """
+                        prompt += f"""
+                        - ADX：{data['4h_data']['adx']:.2f} (DI+ = {data['4h_data']['plus_di']:.2f}, DI- = {data['4h_data']['minus_di']:.2f})
+                        """
+                        prompt += f"""
+                        - 布林带：中轨 = {data['4h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['4h_data']['bollinger_bands']['width']:.4f}
+                        """
+                        prompt += f"""
+                        - 超级趋势：方向 = {data['trend_analysis']['4h_supertrend']}
+                        """
+                        prompt += f"""
+                        - 支撑位：{data['4h_data']['support_levels']}
+                        """
+                        prompt += f"""
+                        - 阻力位：{data['4h_data']['resistance_levels']}
+                        """
                         
-                        prompt += "\n#### 1小时图表数据\n"
-                        prompt += f"- EMA数据：20 EMA = {data['1h_data']['ema']['20']:.2f}, 50 EMA = {data['1h_data']['ema']['50']:.2f}, 200 EMA = {data['1h_data']['ema']['200']:.2f}\n"
-                        prompt += f"- RSI(14)：{data['1h_data']['rsi']['14']:.2f}\n"
-                        prompt += f"- MACD：线 = {data['1h_data']['macd']['line']:.6f}, 信号 = {data['1h_data']['macd']['signal']:.6f}, 柱状图 = {data['1h_data']['macd']['histogram']:.6f}\n"
-                        prompt += f"- 随机指标：K = {data['1h_data']['stochastic']['k']:.2f}, D = {data['1h_data']['stochastic']['d']:.2f}\n"
-                        prompt += f"- ADX：{data['1h_data']['adx']:.2f} (DI+ = {data['1h_data']['plus_di']:.2f}, DI- = {data['1h_data']['minus_di']:.2f})\n"
-                        prompt += f"- 布林带：中轨 = {data['1h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['1h_data']['bollinger_bands']['width']:.4f}\n"
-                        prompt += f"- 超级趋势：方向 = {data['trend_analysis']['1h_supertrend']}\n"
-                        prompt += f"- 支撑位：{data['1h_data']['support_levels']}\n"
-                        prompt += f"- 阻力位：{data['1h_data']['resistance_levels']}\n"
+                        prompt += f"""
+                        #### 1小时图表数据
+                        """
+                        prompt += f"""
+                        - EMA数据：20 EMA = {data['1h_data']['ema']['20']:.2f}, 50 EMA = {data['1h_data']['ema']['50']:.2f}, 200 EMA = {data['1h_data']['ema']['200']:.2f}
+                        """
+                        prompt += f"""
+                        - RSI(14)：{data['1h_data']['rsi']['14']:.2f}
+                        """
+                        prompt += f"""
+                        - MACD：线 = {data['1h_data']['macd']['line']:.6f}, 信号 = {data['1h_data']['macd']['signal']:.6f}, 柱状图 = {data['1h_data']['macd']['histogram']:.6f}
+                        """
+                        prompt += f"""
+                        - 随机指标：K = {data['1h_data']['stochastic']['k']:.2f}, D = {data['1h_data']['stochastic']['d']:.2f}
+                        """
+                        prompt += f"""
+                        - ADX：{data['1h_data']['adx']:.2f} (DI+ = {data['1h_data']['plus_di']:.2f}, DI- = {data['1h_data']['minus_di']:.2f})
+                        """
+                        prompt += f"""
+                        - 布林带：中轨 = {data['1h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['1h_data']['bollinger_bands']['width']:.4f}
+                        """
+                        prompt += f"""
+                        - 超级趋势：方向 = {data['trend_analysis']['1h_supertrend']}
+                        """
+                        prompt += f"""
+                        - 支撑位：{data['1h_data']['support_levels']}
+                        """
+                        prompt += f"""
+                        - 阻力位：{data['1h_data']['resistance_levels']}
+                        """
                         
-                        prompt += "\n#### 市场数据\n"
-                        prompt += f"- 资金费率：{data['market_data']['funding_rate']}\n"
-                        prompt += f"- 24小时价格变化：{data['market_data']['price_change_24h']}%\n"
-                        prompt += f"- 24小时成交量：{data['market_data']['volume_24h']} USDT\n"
+                        prompt += f"""
+                        #### 市场数据
+                        """
+                        prompt += f"""
+                        - 资金费率：{data['market_data']['funding_rate']}
+                        """
+                        prompt += f"""
+                        - 24小时价格变化：{data['market_data']['price_change_24h']}%
+                        """
+                        prompt += f"""
+                        - 24小时成交量：{data['market_data']['volume_24h']} USDT
+                        """
                         if data['market_data']['open_interest']:
-                            prompt += f"- 未平仓合约：{data['market_data']['open_interest']} USDT\n"
+                            prompt += f"""
+                            - 未平仓合约：{data['market_data']['open_interest']} USDT
+                            """
                 
                 # 添加分析需求
                 prompt += f"""
@@ -2485,6 +2618,6 @@ class AdvancedMultiCryptoAnalyzer:
                 logger.warning(f"第{attempt + 1}次尝试异常: {e}")
                 if attempt == max_retries - 1:
                     break
-                time.sleep(1)
+                time.sleep(3)
                 
         
