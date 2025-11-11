@@ -600,7 +600,7 @@ def execute_trade(signal_data, symbols):
                 coin_logger.warning("信号数量为0，跳过执行")
                 continue
 
-        if action in ('OPEN_LONG', 'OPEN_SHORT', 'CLOSE_LONG', 'CLOSE_SHORT') and (confidence_label == 'LOW' or confidence_label == 'MEDIUM'):
+        if action in ('OPEN_LONG', 'OPEN_SHORT', 'CLOSE_LONG', 'CLOSE_SHORT') and (confidence_label == 'LOW'):
             coin_logger.warning("低信心信号，跳过执行")
             continue
 
