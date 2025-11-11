@@ -2335,9 +2335,9 @@ class AdvancedMultiCryptoAnalyzer:
                 # 添加相关性矩阵信息
                 if include_correlation and self.correlation_matrix is not None:
                     prompt += f"""
-                    ## 币种相关性分析
-                    以下是主要币种之间的相关性（1表示完全正相关，-1表示完全负相关）：
-                    
+                ## 币种相关性分析
+                以下是主要币种之间的相关性（1表示完全正相关，-1表示完全负相关）：
+                
                     
                     """
                     
@@ -2346,13 +2346,13 @@ class AdvancedMultiCryptoAnalyzer:
                     if main_coins:
                         matrix = self.correlation_matrix.loc[main_coins, main_coins].round(2)
                         prompt += f"""
-                        {matrix.to_string()}
+                {matrix.to_string()}
                         
                         
                         """
                     
                     prompt += f"""
-                    交易建议应考虑币种相关性，避免同时持有高度相关的同向头寸。
+                交易建议应考虑币种相关性，避免同时持有高度相关的同向头寸。
                     """
 
                 # 添加波动性排名
@@ -2362,7 +2362,7 @@ class AdvancedMultiCryptoAnalyzer:
                 if volatility_ranking:
                     for i, coin in enumerate(volatility_ranking[:5], 1):
                         prompt += f"""
-                        {i}. {coin['symbol']} - ATR百分比: {coin['atr_percent']:.2f}%, 波动性评级: {coin['volatility_rating']}
+                    {i}. {coin['symbol']} - ATR百分比: {coin['atr_percent']:.2f}%, 波动性评级: {coin['volatility_rating']}
                         """
                 else:
                     prompt += f"""
@@ -2376,7 +2376,7 @@ class AdvancedMultiCryptoAnalyzer:
                 if momentum_ranking:
                     for i, coin in enumerate(momentum_ranking[:5], 1):
                         prompt += f"""
-                        {i}. {coin['symbol']} - 技术评分: {coin['technical_score']:.2f}, RSI: {coin['rsi_14']:.2f}, 24h变化: {coin['price_change_24h']:.2f}%
+                    {i}. {coin['symbol']} - 技术评分: {coin['technical_score']:.2f}, RSI: {coin['rsi_14']:.2f}, 24h变化: {coin['price_change_24h']:.2f}%
                         """
                 else:
                     prompt += f"""
@@ -2456,123 +2456,123 @@ class AdvancedMultiCryptoAnalyzer:
                         data = self.analysis_results[symbol]
                         
                         prompt += f"""
-                        ### {symbol}
+                    ### {symbol}
                         """
                         prompt += f"""
-                        - 当前价格：{data['current_price']}
+                    - 当前价格：{data['current_price']}
                         """
                         prompt += f"""
-                        - 技术评分：{data['technical_score']:.1f} (正值=看涨，负值=看跌)
+                    - 技术评分：{data['technical_score']:.1f} (正值=看涨，负值=看跌)
                         """
                         prompt += f"""
-                        - 交易信号：{data['trading_signals']['recommendation']} (信心: {data['trading_signals']['confidence']:.2f})
+                    - 交易信号：{data['trading_signals']['recommendation']} (信心: {data['trading_signals']['confidence']:.2f})
                         """
                         prompt += f"""
-                        - 1小时趋势：{data['trend_analysis']['1h_trend']} ({data['trend_analysis']['1h_strength']})
+                    - 1小时趋势：{data['trend_analysis']['1h_trend']} ({data['trend_analysis']['1h_strength']})
                         """
                         prompt += f"""
-                        - 4小时趋势：{data['trend_analysis']['4h_trend']} ({data['trend_analysis']['4h_strength']})
+                    - 4小时趋势：{data['trend_analysis']['4h_trend']} ({data['trend_analysis']['4h_strength']})
                         """
                         prompt += f"""
-                        - 趋势一致性：{data['trend_analysis']['consistency']}
+                    - 趋势一致性：{data['trend_analysis']['consistency']}
                         """
                         
                         # 添加背离信息
                         div_analysis = data['divergence_analysis']
                         if div_analysis['strength'] != "无":
                             prompt += f"""
-                            - 背离：{div_analysis['strength']}
+                    - 背离：{div_analysis['strength']}
                             """
                         
                         # 添加波动性信息
                         vol_analysis = data['volatility_analysis']
                         prompt += f"""
-                        - 波动性：{vol_analysis['rating']} (ATR百分比: {vol_analysis['4h']['atr_percent']:.2f}%)
+                    - 波动性：{vol_analysis['rating']} (ATR百分比: {vol_analysis['4h']['atr_percent']:.2f}%)
                         """
                         
                         # 添加市场结构
                         market_struct = data['market_structure']
                         prompt += f"""
-                        - 市场结构：1小时={market_struct['1h']['structure']}, 4小时={market_struct['4h']['structure']}
+                    - 市场结构：1小时={market_struct['1h']['structure']}, 4小时={market_struct['4h']['structure']}
                         """
                         
                         prompt += f"""
-                        #### 4小时图表数据
+                    #### 4小时图表数据
                         """
                         prompt += f"""
-                        - EMA数据：20 EMA = {data['4h_data']['ema']['20']:.2f}, 50 EMA = {data['4h_data']['ema']['50']:.2f}, 200 EMA = {data['4h_data']['ema']['200']:.2f}
+                    - EMA数据：20 EMA = {data['4h_data']['ema']['20']:.2f}, 50 EMA = {data['4h_data']['ema']['50']:.2f}, 200 EMA = {data['4h_data']['ema']['200']:.2f}
                         """
                         prompt += f"""
-                        - RSI(14)：{data['4h_data']['rsi']['14']:.2f}
+                    - RSI(14)：{data['4h_data']['rsi']['14']:.2f}
                         """
                         prompt += f"""
-                        - MACD：线 = {data['4h_data']['macd']['line']:.6f}, 信号 = {data['4h_data']['macd']['signal']:.6f}, 柱状图 = {data['4h_data']['macd']['histogram']:.6f}
+                    - MACD：线 = {data['4h_data']['macd']['line']:.6f}, 信号 = {data['4h_data']['macd']['signal']:.6f}, 柱状图 = {data['4h_data']['macd']['histogram']:.6f}
                         """
                         prompt += f"""
-                        - 随机指标：K = {data['4h_data']['stochastic']['k']:.2f}, D = {data['4h_data']['stochastic']['d']:.2f}
+                    - 随机指标：K = {data['4h_data']['stochastic']['k']:.2f}, D = {data['4h_data']['stochastic']['d']:.2f}
                         """
                         prompt += f"""
-                        - ADX：{data['4h_data']['adx']:.2f} (DI+ = {data['4h_data']['plus_di']:.2f}, DI- = {data['4h_data']['minus_di']:.2f})
+                    - ADX：{data['4h_data']['adx']:.2f} (DI+ = {data['4h_data']['plus_di']:.2f}, DI- = {data['4h_data']['minus_di']:.2f})
                         """
                         prompt += f"""
-                        - 布林带：中轨 = {data['4h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['4h_data']['bollinger_bands']['width']:.4f}
+                    - 布林带：中轨 = {data['4h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['4h_data']['bollinger_bands']['width']:.4f}
                         """
                         prompt += f"""
-                        - 超级趋势：方向 = {data['trend_analysis']['4h_supertrend']}
+                    - 超级趋势：方向 = {data['trend_analysis']['4h_supertrend']}
                         """
                         prompt += f"""
-                        - 支撑位：{data['4h_data']['support_levels']}
+                    - 支撑位：{data['4h_data']['support_levels']}
                         """
                         prompt += f"""
-                        - 阻力位：{data['4h_data']['resistance_levels']}
-                        """
-                        
-                        prompt += f"""
-                        #### 1小时图表数据
-                        """
-                        prompt += f"""
-                        - EMA数据：20 EMA = {data['1h_data']['ema']['20']:.2f}, 50 EMA = {data['1h_data']['ema']['50']:.2f}, 200 EMA = {data['1h_data']['ema']['200']:.2f}
-                        """
-                        prompt += f"""
-                        - RSI(14)：{data['1h_data']['rsi']['14']:.2f}
-                        """
-                        prompt += f"""
-                        - MACD：线 = {data['1h_data']['macd']['line']:.6f}, 信号 = {data['1h_data']['macd']['signal']:.6f}, 柱状图 = {data['1h_data']['macd']['histogram']:.6f}
-                        """
-                        prompt += f"""
-                        - 随机指标：K = {data['1h_data']['stochastic']['k']:.2f}, D = {data['1h_data']['stochastic']['d']:.2f}
-                        """
-                        prompt += f"""
-                        - ADX：{data['1h_data']['adx']:.2f} (DI+ = {data['1h_data']['plus_di']:.2f}, DI- = {data['1h_data']['minus_di']:.2f})
-                        """
-                        prompt += f"""
-                        - 布林带：中轨 = {data['1h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['1h_data']['bollinger_bands']['width']:.4f}
-                        """
-                        prompt += f"""
-                        - 超级趋势：方向 = {data['trend_analysis']['1h_supertrend']}
-                        """
-                        prompt += f"""
-                        - 支撑位：{data['1h_data']['support_levels']}
-                        """
-                        prompt += f"""
-                        - 阻力位：{data['1h_data']['resistance_levels']}
+                    - 阻力位：{data['4h_data']['resistance_levels']}
                         """
                         
                         prompt += f"""
-                        #### 市场数据
+                    #### 1小时图表数据
                         """
                         prompt += f"""
-                        - 资金费率：{data['market_data']['funding_rate']}
+                    - EMA数据：20 EMA = {data['1h_data']['ema']['20']:.2f}, 50 EMA = {data['1h_data']['ema']['50']:.2f}, 200 EMA = {data['1h_data']['ema']['200']:.2f}
                         """
                         prompt += f"""
-                        - 24小时价格变化：{data['market_data']['price_change_24h']}%
+                    - RSI(14)：{data['1h_data']['rsi']['14']:.2f}
                         """
                         prompt += f"""
-                        - 24小时成交量：{data['market_data']['volume_24h']} USDT
+                    - MACD：线 = {data['1h_data']['macd']['line']:.6f}, 信号 = {data['1h_data']['macd']['signal']:.6f}, 柱状图 = {data['1h_data']['macd']['histogram']:.6f}
+                        """
+                        prompt += f"""
+                    - 随机指标：K = {data['1h_data']['stochastic']['k']:.2f}, D = {data['1h_data']['stochastic']['d']:.2f}
+                        """
+                        prompt += f"""
+                    - ADX：{data['1h_data']['adx']:.2f} (DI+ = {data['1h_data']['plus_di']:.2f}, DI- = {data['1h_data']['minus_di']:.2f})
+                        """
+                        prompt += f"""
+                    - 布林带：中轨 = {data['1h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['1h_data']['bollinger_bands']['width']:.4f}
+                        """
+                        prompt += f"""
+                    - 超级趋势：方向 = {data['trend_analysis']['1h_supertrend']}
+                        """
+                        prompt += f"""
+                    - 支撑位：{data['1h_data']['support_levels']}
+                        """
+                        prompt += f"""
+                    - 阻力位：{data['1h_data']['resistance_levels']}
+                        """
+                        
+                        prompt += f"""
+                    #### 市场数据
+                        """
+                        prompt += f"""
+                    - 资金费率：{data['market_data']['funding_rate']}
+                        """
+                        prompt += f"""
+                    - 24小时价格变化：{data['market_data']['price_change_24h']}%
+                        """
+                        prompt += f"""
+                    - 24小时成交量：{data['market_data']['volume_24h']} USDT
                         """
                         if data['market_data']['open_interest']:
                             prompt += f"""
-                            - 未平仓合约：{data['market_data']['open_interest']} USDT
+                    - 未平仓合约：{data['market_data']['open_interest']} USDT
                             """
                 
                 # 添加分析需求
