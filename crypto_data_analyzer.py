@@ -431,6 +431,39 @@ class AdvancedMultiCryptoAnalyzer:
         df['technical_score'] = (df['technical_score'] / max_score) * 100
         
         return df
+
+    def calculate_sharpe_ratio(self, close_series, timeframe_hours=1):
+        """
+        计算夏普率（年化）
+
+        参数:
+        close_series (pandas.Series): 收盘价序列
+        timeframe_hours (float): 时间框架对应的小时数
+
+        返回:
+        float or None: 夏普率，若无法计算则返回None
+        """
+        if close_series is None or len(close_series) < 2:
+            return None
+
+        returns = close_series.pct_change().dropna()
+        if returns.empty:
+            return None
+
+        std = returns.std()
+        if std is None or std == 0 or np.isnan(std):
+            return None
+
+        if timeframe_hours is None or timeframe_hours <= 0:
+            timeframe_hours = 1
+
+        periods_per_year = (24 / timeframe_hours) * 365
+        sharpe = (returns.mean() / std) * np.sqrt(periods_per_year)
+
+        if np.isnan(sharpe) or np.isinf(sharpe):
+            return None
+
+        return float(sharpe)
     
     def identify_support_resistance(self, df, window=10, threshold=0.01):
         """
@@ -935,7 +968,11 @@ class AdvancedMultiCryptoAnalyzer:
         
         # 当前价格
         current_price = df_1h['close'].iloc[-1]
-        
+
+        # 夏普率（1小时和4小时）
+        sharpe_ratio_1h = self.calculate_sharpe_ratio(df_1h['close'], timeframe_hours=1)
+        sharpe_ratio_4h = self.calculate_sharpe_ratio(df_4h['close'], timeframe_hours=4)
+
         # 准备分析数据
         analysis_data = {
             'symbol': symbol,
@@ -998,7 +1035,8 @@ class AdvancedMultiCryptoAnalyzer:
                 'trend_score': df_4h['trend_score'].iloc[-1],
                 'momentum_score': df_4h['momentum_score'].iloc[-1],
                 'volatility_score': df_4h['volatility_score'].iloc[-1],
-                'volume_score': df_4h['volume_score'].iloc[-1]
+                'volume_score': df_4h['volume_score'].iloc[-1],
+                'sharpe_ratio': sharpe_ratio_4h
             },
             
             '1h_data': {
@@ -1057,7 +1095,8 @@ class AdvancedMultiCryptoAnalyzer:
                 'trend_score': df_1h['trend_score'].iloc[-1],
                 'momentum_score': df_1h['momentum_score'].iloc[-1],
                 'volatility_score': df_1h['volatility_score'].iloc[-1],
-                'volume_score': df_1h['volume_score'].iloc[-1]
+                'volume_score': df_1h['volume_score'].iloc[-1],
+                'sharpe_ratio': sharpe_ratio_1h
             },
             
             'market_data': market_data,
@@ -2454,6 +2493,10 @@ class AdvancedMultiCryptoAnalyzer:
                 for symbol in symbols:
                     if symbol in self.analysis_results:
                         data = self.analysis_results[symbol]
+                        sharpe_4h = data['4h_data'].get('sharpe_ratio')
+                        sharpe_1h = data['1h_data'].get('sharpe_ratio')
+                        sharpe_4h_text = f"{sharpe_4h:.2f}" if sharpe_4h is not None else "暂无数据"
+                        sharpe_1h_text = f"{sharpe_1h:.2f}" if sharpe_1h is not None else "暂无数据"
                         
                         prompt += f"""
                     ### {symbol}
@@ -2515,6 +2558,9 @@ class AdvancedMultiCryptoAnalyzer:
                     - ADX：{data['4h_data']['adx']:.2f} (DI+ = {data['4h_data']['plus_di']:.2f}, DI- = {data['4h_data']['minus_di']:.2f})
                         """
                         prompt += f"""
+                    - 夏普率：{sharpe_4h_text}
+                        """
+                        prompt += f"""
                     - 布林带：中轨 = {data['4h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['4h_data']['bollinger_bands']['width']:.4f}
                         """
                         prompt += f"""
@@ -2544,6 +2590,9 @@ class AdvancedMultiCryptoAnalyzer:
                         """
                         prompt += f"""
                     - ADX：{data['1h_data']['adx']:.2f} (DI+ = {data['1h_data']['plus_di']:.2f}, DI- = {data['1h_data']['minus_di']:.2f})
+                        """
+                        prompt += f"""
+                    - 夏普率：{sharpe_1h_text}
                         """
                         prompt += f"""
                     - 布林带：中轨 = {data['1h_data']['bollinger_bands']['middle']:.2f}, 宽度 = {data['1h_data']['bollinger_bands']['width']:.4f}

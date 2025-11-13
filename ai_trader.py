@@ -14,7 +14,6 @@ import argparse
 import logging
 from logging.handlers import RotatingFileHandler
 
-from market_data import get_market_data, format_market_data
 from account_utils import (
     compute_account_metrics,
     format_position,
@@ -43,14 +42,6 @@ deepseek_client = OpenAI(
 AI_MODEL = os.getenv('AI_MODEL', 'qwen/qwen3-max')
 # 初始化OKX交易所
 exchange = AdvancedMultiCryptoAnalyzer(exchange_id='okx', api_key=os.getenv('OKX_API_KEY'), api_secret=os.getenv('OKX_SECRET'), password=os.getenv('OKX_PASSWORD'))
-# ccxt.okx({
-#     'options': {
-#         'defaultType': 'swap',  # OKX使用swap表示永续合约
-#     },
-#     'apiKey': os.getenv('OKX_API_KEY'),
-#     'secret': os.getenv('OKX_SECRET'),
-#     'password': os.getenv('OKX_PASSWORD'),  # OKX需要交易密码
-# })
 
 start_time = datetime.now(UTC)
 minutes_elapsed = 0
@@ -267,7 +258,48 @@ def analyze_with_deepseek(symbols):
         4.投资组合构建：基于风险调整后收益提供资金分配建议
         5.具体交易建议：为每个推荐交易提供精确的入场区域、止损位和目标位
         6.执行优先级：明确交易执行顺序和时间敏感度
+
+        # 交易哲学与最佳实践
+
+        ## 核心原则
+
+        1. **资金保全优先**：保护本金比追逐收益更重要
+        2. **纪律胜于情绪**：严格执行止损计划，切勿随意调整止损位或目标位
+        3. **质量重于数量**：少数高确信度交易胜过大量低确信度交易
+        4. **顺应波动**：根据市场状况调整仓位规模
+        5. **顺应趋势**：勿逆强劲方向性行情而为
+
+        ## 常见陷阱需规避
+
+        - ⚠️ **过度交易**：频繁交易将通过手续费蚕食本金
+        - ⚠️ **报复性交易**：切勿在亏损后加仓试图"挽回损失"
+        - ⚠️ **分析瘫痪**：勿等待完美交易机会，世上本无完美布局
+        - ⚠️ **忽视相关性**：比特币常引领山寨币走势，请优先关注比特币
+        - ⚠️ **过度杠杆**：高杠杆会放大收益与亏损
+
+        ## 决策框架
+
+        1. 优先分析当前持仓（表现是否符合预期？）
+        2. 检查现有交易的失效条件
+        3. 仅在资金充足时筛选新机会
+        4. 风险管理优先于利润最大化
+        5. 犹豫时选择"持仓"而非强行交易
+
+        ## 持仓管理限制
+
+        - **禁止金字塔式加仓**：不得追加现有仓位（每种币种最多持有一个仓位）
+        - **禁止对冲**：不得同时持有同一资产的多空头寸
+        - **禁止部分平仓**：必须一次性平掉全部仓位
         
+        ## 交易机制
+
+        - **合约类型**：永续合约（无到期日）
+        - **资金结算机制**：
+        - 正资金费率 = 多头支付空头（市场看涨情绪）
+        - 负资金费率 = 做空方支付做多方（看跌市场情绪）
+        - **交易手续费**：每笔交易约0.02-0.05%（按挂单/吃单费率执行）
+        - **滑点**：市价单预计0.01-0.1%，具体取决于交易规模
+
         # 输出标准
 
         你的分析必须：
@@ -315,6 +347,32 @@ def analyze_with_deepseek(symbols):
             "risk_usd": <float>,
             "justification": "<string>（中文回答）"
         }}}}
+
+        # 绩效指标与反馈
+
+        每次调用时将获取夏普比率：
+
+        夏普比率 = (平均收益率 - 无风险利率) / 收益率标准差
+
+        解读：
+        - < 0：平均处于亏损状态
+        - 0-1：收益为正但波动性高
+        - 1-2：风险调整后表现良好
+        - > 2：风险调整后表现卓越
+
+        运用夏普比率校准投资行为：
+        - 夏普比率低 → 缩减仓位规模，收紧止损位，提高选择性
+        - 高夏普比率 → 当前策略有效，保持纪律性
+
+        # 最终说明
+
+        1. 决策前务必仔细阅读完整用户提示
+        2. 核对仓位计算（双重检查）
+        3. 确保生成的JSON输出格式正确且内容完整
+        4. 提供真实的信心评分（切勿夸大判断力度）
+        5. 严格执行止损计划（切勿提前放弃止损位）
+
+        谨记：您正在真实市场中使用真实资金交易。每个决策都将产生后果。请系统化交易、严格管控风险，让概率在时间长河中为您创造优势。
         """
         
         user_prompt_content = exchange.generate_multi_coin_analysis_prompt(symbols, logger=logger)
@@ -751,13 +809,6 @@ def analyze_with_deepseek_with_retry(symbols, max_retries=50):
             time.sleep(3)
 
     return None
-
-def get_coins_ohlcv_enhanced(coin_list):
-    price_data = {}
-    for coin in coin_list:
-        price_data[coin] = get_market_data(coin)
-    return price_data
-
 
 def sync_positions_snapshot(snapshot_ts=None):
     """Fetch positions from the exchange and update dashboard state."""
